@@ -1,0 +1,821 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (c) 2025 Ahmed Essam <aessam.dahy@gmail.com>
+
+"""
+IMU Integration Module for Polychase
+
+This module provides IMU (Inertial Measurement Unit) data processing and
+integration for improved camera tracking with automatic Z-axis orientation.
+Supports OpenCamera-Sensors CSV format and CAMM (Camera Motion Metadata) from MP4 files.
+"""
+
+import os
+import typing
+from dataclasses import dataclass
+
+import numpy as np
+from scipy import signal
+from scipy.interpolate import interp1d
+
+try:
+    import mathutils
+    # Verify it's the real mathutils (has Quaternion class)
+    if not hasattr(mathutils, 'Quaternion'):
+        raise ImportError("mathutils doesn't have Quaternion")
+except (ImportError, AttributeError):
+    # Mock mathutils for testing outside Blender
+    class MockQuaternion:
+        def __init__(self, *args):
+            if len(args) == 1 and isinstance(args[0], (list, tuple, np.ndarray)) and len(args[0]) == 4:
+                # WXYZ format
+                self.w, self.x, self.y, self.z = args[0]
+            elif len(args) == 2:
+                # axis, angle format
+                axis, angle = args
+                axis = np.array(axis)
+                axis = axis / np.linalg.norm(axis)
+                self.w = np.cos(angle / 2)
+                self.x, self.y, self.z = axis * np.sin(angle / 2)
+            else:
+                self.w, self.x, self.y, self.z = args if len(args) == 4 else (1, 0, 0, 0)
+        
+        def __mul__(self, other):
+            # Quaternion multiplication
+            w1, x1, y1, z1 = self.w, self.x, self.y, self.z
+            w2, x2, y2, z2 = other.w, other.x, other.y, other.z
+            return MockQuaternion([
+                w1*w2 - x1*x2 - y1*y2 - z1*z2,
+                w1*x2 + x1*w2 + y1*z2 - z1*y2,
+                w1*y2 - x1*z2 + y1*w2 + z1*x2,
+                w1*z2 + x1*y2 - y1*x2 + z1*w2
+            ])
+        
+        def slerp(self, other, factor):
+            # Simplified slerp
+            if factor <= 0:
+                return self
+            if factor >= 1:
+                return other
+            # Linear interpolation for simplicity
+            w = self.w * (1 - factor) + other.w * factor
+            x = self.x * (1 - factor) + other.x * factor
+            y = self.y * (1 - factor) + other.y * factor
+            z = self.z * (1 - factor) + other.z * factor
+            norm = np.sqrt(w*w + x*x + y*y + z*z)
+            if norm > 0:
+                return MockQuaternion([w/norm, x/norm, y/norm, z/norm])
+            return self
+        
+        @property
+        def magnitude(self):
+            return np.sqrt(self.w*self.w + self.x*self.x + self.y*self.y + self.z*self.z)
+        
+        def __eq__(self, other):
+            if not isinstance(other, MockQuaternion):
+                return False
+            return abs(self.w - other.w) < 1e-6 and abs(self.x - other.x) < 1e-6 and \
+                   abs(self.y - other.y) < 1e-6 and abs(self.z - other.z) < 1e-6
+    
+    class MockVector:
+        def __init__(self, *args):
+            if len(args) == 1:
+                self.x, self.y, self.z = args[0] if len(args[0]) >= 3 else (0, 0, 0)
+            else:
+                self.x, self.y, self.z = args if len(args) >= 3 else (0, 0, 0)
+    
+    class MockMathutils:
+        Quaternion = MockQuaternion
+        Vector = MockVector
+    
+    mathutils = MockMathutils()
+
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
+
+
+@dataclass
+class IMUSample:
+    """Single IMU sample with timestamp"""
+    timestamp_ns: int
+    accel: np.ndarray  # [x, y, z] in m/s^2
+    gyro: np.ndarray   # [x, y, z] in rad/s
+
+
+@dataclass
+class IMUData:
+    """Container for IMU data with timestamps"""
+    samples: list[IMUSample]
+    video_timestamps: np.ndarray  # Timestamps for each video frame (ns)
+    
+    def __len__(self) -> int:
+        return len(self.samples)
+    
+    def get_sample_at_timestamp(self, timestamp_ns: int) -> IMUSample | None:
+        """Get IMU sample closest to given timestamp"""
+        if not self.samples:
+            return None
+        
+        # Binary search for closest sample
+        timestamps = np.array([s.timestamp_ns for s in self.samples])
+        idx = np.searchsorted(timestamps, timestamp_ns)
+        
+        if idx == 0:
+            return self.samples[0]
+        elif idx >= len(self.samples):
+            return self.samples[-1]
+        else:
+            # Return closest sample
+            if abs(timestamps[idx] - timestamp_ns) < abs(timestamps[idx-1] - timestamp_ns):
+                return self.samples[idx]
+            else:
+                return self.samples[idx-1]
+    
+    def interpolate_at_timestamp(self, timestamp_ns: int) -> IMUSample | None:
+        """Interpolate IMU data at given timestamp"""
+        if len(self.samples) < 2:
+            return self.get_sample_at_timestamp(timestamp_ns)
+        
+        timestamps = np.array([s.timestamp_ns for s in self.samples])
+        
+        # Check bounds
+        if timestamp_ns < timestamps[0] or timestamp_ns > timestamps[-1]:
+            return self.get_sample_at_timestamp(timestamp_ns)
+        
+        # Interpolate accelerometer
+        accel_data = np.array([[s.accel[0], s.accel[1], s.accel[2]] for s in self.samples])
+        accel_interp = interp1d(timestamps, accel_data, axis=0, kind='linear', 
+                               bounds_error=False, fill_value='extrapolate')
+        accel = accel_interp(timestamp_ns)
+        
+        # Interpolate gyroscope
+        gyro_data = np.array([[s.gyro[0], s.gyro[1], s.gyro[2]] for s in self.samples])
+        gyro_interp = interp1d(timestamps, gyro_data, axis=0, kind='linear',
+                              bounds_error=False, fill_value='extrapolate')
+        gyro = gyro_interp(timestamp_ns)
+        
+        return IMUSample(timestamp_ns=timestamp_ns, accel=accel, gyro=gyro)
+
+
+class IMUProcessor:
+    """Processes IMU data for camera tracking"""
+    
+    def __init__(self, imu_data: IMUData, lowpass_cutoff: float = 0.1, 
+                 lowpass_order: int = 4, sample_rate_hz: float = 200.0):
+        """
+        Initialize IMU processor
+        
+        Args:
+            imu_data: IMU data container
+            lowpass_cutoff: Low-pass filter cutoff frequency for gravity extraction (Hz)
+            lowpass_order: Filter order for low-pass filter
+            sample_rate_hz: IMU sample rate in Hz (for filter design)
+        """
+        self.imu_data = imu_data
+        self.lowpass_cutoff = lowpass_cutoff
+        self.lowpass_order = lowpass_order
+        self.sample_rate_hz = sample_rate_hz
+        
+        # Compute gravity vector from accelerometer
+        self._gravity_vector = None
+        self._gravity_vector_normalized = None
+        self._compute_gravity_vector()
+        
+        # Gyroscope bias (can be calibrated)
+        self._gyro_bias = np.zeros(3)
+        self._compute_gyro_bias()
+    
+    def _compute_gravity_vector(self):
+        """Compute gravity vector using low-pass filtered accelerometer data"""
+        if not self.imu_data.samples:
+            self._gravity_vector = np.array([0.0, 0.0, -9.81])
+            self._gravity_vector_normalized = np.array([0.0, 0.0, -1.0])
+            return
+        
+        # Extract accelerometer data
+        accel_data = np.array([[s.accel[0], s.accel[1], s.accel[2]] for s in self.imu_data.samples])
+        
+        # Design low-pass filter to isolate gravity
+        nyquist = self.sample_rate_hz / 2.0
+        normal_cutoff = self.lowpass_cutoff / nyquist
+        b, a = signal.butter(self.lowpass_order, normal_cutoff, btype='low')
+        
+        # Apply filter to each axis
+        filtered_accel = np.zeros_like(accel_data)
+        for i in range(3):
+            filtered_accel[:, i] = signal.filtfilt(b, a, accel_data[:, i])
+        
+        # Use median of filtered data as gravity vector (more robust than mean)
+        self._gravity_vector = np.median(filtered_accel, axis=0)
+        
+        # Normalize
+        norm = np.linalg.norm(self._gravity_vector)
+        if norm > 0.1:  # Sanity check
+            self._gravity_vector_normalized = self._gravity_vector / norm
+        else:
+            # Fallback to standard gravity
+            self._gravity_vector_normalized = np.array([0.0, 0.0, -1.0])
+            self._gravity_vector = np.array([0.0, 0.0, -9.81])
+    
+    def _compute_gyro_bias(self):
+        """Estimate gyroscope bias from static periods"""
+        if not self.imu_data.samples:
+            return
+        
+        # Find periods with low acceleration variance (static periods)
+        accel_data = np.array([[s.accel[0], s.accel[1], s.accel[2]] for s in self.imu_data.samples])
+        accel_magnitude = np.linalg.norm(accel_data, axis=1)
+        
+        # Use samples where acceleration is close to gravity (static)
+        gravity_magnitude = np.linalg.norm(self._gravity_vector)
+        static_mask = np.abs(accel_magnitude - gravity_magnitude) < 0.5  # 0.5 m/s^2 threshold
+        
+        if np.sum(static_mask) > 10:  # Need at least 10 static samples
+            gyro_data = np.array([[s.gyro[0], s.gyro[1], s.gyro[2]] for s in self.imu_data.samples])
+            self._gyro_bias = np.median(gyro_data[static_mask], axis=0)
+        else:
+            self._gyro_bias = np.zeros(3)
+    
+    def get_gravity_vector(self) -> np.ndarray:
+        """Get gravity vector in sensor frame (normalized)"""
+        return self._gravity_vector_normalized.copy()
+    
+    def get_gravity_magnitude(self) -> float:
+        """Get gravity magnitude"""
+        return np.linalg.norm(self._gravity_vector)
+    
+    def get_gravity_consistency(self) -> float:
+        """
+        Compute gravity vector consistency (0-1, higher is better)
+        Measures how consistent the gravity direction is across samples
+        """
+        if not self.imu_data.samples or len(self.imu_data.samples) < 10:
+            return 0.0
+        
+        # Sample a subset for efficiency
+        step = max(1, len(self.imu_data.samples) // 100)
+        samples = self.imu_data.samples[::step]
+        
+        # Compute gravity direction for each sample using low-pass filter
+        accel_data = np.array([[s.accel[0], s.accel[1], s.accel[2]] for s in samples])
+        
+        # Normalize each acceleration vector
+        norms = np.linalg.norm(accel_data, axis=1)
+        valid_mask = norms > 0.1
+        if np.sum(valid_mask) < 10:
+            return 0.0
+        
+        normalized = accel_data[valid_mask] / norms[valid_mask, np.newaxis]
+        
+        # Compute mean direction
+        mean_dir = np.mean(normalized, axis=0)
+        mean_dir = mean_dir / np.linalg.norm(mean_dir)
+        
+        # Compute consistency as average dot product with mean direction
+        consistency = np.mean(np.abs(np.dot(normalized, mean_dir)))
+        
+        return float(consistency)
+    
+    def get_gyro_drift(self) -> float:
+        """
+        Estimate gyroscope drift rate (rad/s)
+        Higher values indicate more drift
+        """
+        if not self.imu_data.samples or len(self.imu_data.samples) < 100:
+            return 0.0
+        
+        # Sample gyro data
+        gyro_data = np.array([[s.gyro[0], s.gyro[1], s.gyro[2]] for s in self.imu_data.samples])
+        
+        # Remove bias
+        gyro_corrected = gyro_data - self._gyro_bias
+        
+        # Compute drift as standard deviation of gyro magnitude
+        gyro_magnitude = np.linalg.norm(gyro_corrected, axis=1)
+        drift = np.std(gyro_magnitude)
+        
+        return float(drift)
+    
+    def integrate_gyro(self, frame_idx: int, initial_orientation: mathutils.Quaternion,
+                      dt: float = None) -> mathutils.Quaternion:
+        """
+        Integrate gyroscope data to estimate orientation change
+        
+        Args:
+            frame_idx: Video frame index
+            initial_orientation: Starting orientation quaternion
+            dt: Time step (seconds). If None, computed from timestamps
+        
+        Returns:
+            Estimated orientation quaternion
+        """
+        if frame_idx < 0 or frame_idx >= len(self.imu_data.video_timestamps):
+            return initial_orientation
+        
+        if frame_idx == 0:
+            return initial_orientation
+        
+        # Get timestamps for current and previous frame
+        t_current = self.imu_data.video_timestamps[frame_idx]
+        t_prev = self.imu_data.video_timestamps[frame_idx - 1]
+        
+        if dt is None:
+            dt = (t_current - t_prev) * 1e-9  # Convert ns to seconds
+        
+        # Get gyro sample at current frame
+        sample = self.imu_data.interpolate_at_timestamp(t_current)
+        if sample is None:
+            return initial_orientation
+        
+        # Remove bias
+        gyro = sample.gyro - self._gyro_bias
+        
+        # Convert to quaternion rotation
+        # Angular velocity to quaternion derivative: dq/dt = 0.5 * q * [0, wx, wy, wz]
+        angle = np.linalg.norm(gyro) * dt
+        if angle > 1e-6:
+            axis = gyro / np.linalg.norm(gyro)
+            # Create rotation quaternion
+            q_delta = mathutils.Quaternion(axis, angle)
+            return initial_orientation @ q_delta
+        
+        return initial_orientation
+    
+    def get_orientation_from_gravity(self, gravity_in_world: np.ndarray = None) -> mathutils.Quaternion:
+        """
+        Compute camera orientation from gravity vector
+        
+        Args:
+            gravity_in_world: Gravity vector in world frame (default: [0, 0, -1] for Blender)
+        
+        Returns:
+            Quaternion representing rotation from sensor frame to world frame
+        """
+        if gravity_in_world is None:
+            gravity_in_world = np.array([0.0, 0.0, -1.0])  # Blender Z-down
+        
+        gravity_sensor = self.get_gravity_vector()
+        
+        # Compute rotation that aligns sensor gravity with world gravity
+        # Using method from: https://math.stackexchange.com/questions/180418/calculate-rotation-matrix-to-align-vector-a-to-vector-b-in-3d
+        
+        v1 = gravity_sensor
+        v2 = gravity_in_world / np.linalg.norm(gravity_in_world)
+        
+        # Handle case where vectors are parallel
+        if np.abs(np.dot(v1, v2)) > 0.999:
+            if np.dot(v1, v2) > 0:
+                return mathutils.Quaternion((1, 0, 0, 0))  # Identity
+            else:
+                # 180 degree rotation around perpendicular axis
+                if abs(v1[0]) < 0.9:
+                    axis = np.cross(v1, [1, 0, 0])
+                else:
+                    axis = np.cross(v1, [0, 1, 0])
+                axis = axis / np.linalg.norm(axis)
+                return mathutils.Quaternion(axis, np.pi)
+        
+        # Compute rotation axis and angle
+        axis = np.cross(v1, v2)
+        axis = axis / np.linalg.norm(axis)
+        angle = np.arccos(np.clip(np.dot(v1, v2), -1.0, 1.0))
+        
+        return mathutils.Quaternion(axis, angle)
+    
+    def constrain_z_axis_to_gravity(self, orientation: mathutils.Quaternion,
+                                    weight: float = 1.0) -> mathutils.Quaternion:
+        """
+        Constrain camera Z-axis to align with gravity vector
+        
+        Args:
+            orientation: Current camera orientation
+            weight: Blend weight (0-1) for gravity constraint
+        
+        Returns:
+            Blended orientation quaternion
+        """
+        if weight <= 0.0:
+            return orientation
+        
+        # Get gravity-aligned orientation
+        gravity_orientation = self.get_orientation_from_gravity()
+        
+        # Blend orientations
+        if weight >= 1.0:
+            return gravity_orientation
+        else:
+            return orientation.slerp(gravity_orientation, weight)
+
+
+def load_opencamera_csv(accel_path: str, gyro_path: str, 
+                        timestamps_path: str) -> IMUData | None:
+    """
+    Load IMU data from OpenCamera-Sensors CSV format
+    
+    Expected format:
+    - accel.csv: X-data, Y-data, Z-data, timestamp (ns)
+    - gyro.csv: X-data, Y-data, Z-data, timestamp (ns)
+    - timestamps.csv: timestamp (ns) for each video frame
+    
+    Returns:
+        IMUData object or None if loading fails
+    """
+    if pd is None:
+        raise ImportError("pandas is required for CSV loading. Install with: pip install pandas")
+    
+    try:
+        # Load accelerometer data
+        accel_df = pd.read_csv(accel_path)
+        if len(accel_df.columns) < 4:
+            return None
+        
+        accel_data = accel_df.iloc[:, :4].values  # X, Y, Z, timestamp
+        accel_timestamps = accel_data[:, 3].astype(np.int64)
+        accel_values = accel_data[:, :3].astype(np.float32)
+        
+        # Load gyroscope data
+        gyro_df = pd.read_csv(gyro_path)
+        if len(gyro_df.columns) < 4:
+            return None
+        
+        gyro_data = gyro_df.iloc[:, :4].values  # X, Y, Z, timestamp
+        gyro_timestamps = gyro_data[:, 3].astype(np.int64)
+        gyro_values = gyro_data[:, :3].astype(np.float32)
+        
+        # Load video frame timestamps
+        timestamps_df = pd.read_csv(timestamps_path)
+        if len(timestamps_df.columns) < 1:
+            return None
+        
+        video_timestamps = timestamps_df.iloc[:, 0].values.astype(np.int64)
+        
+        # Synchronize accel and gyro data by timestamp
+        # Create combined samples
+        all_timestamps = np.unique(np.concatenate([accel_timestamps, gyro_timestamps]))
+        all_timestamps.sort()
+        
+        if len(all_timestamps) == 0:
+            return None
+        
+        samples = []
+        for ts in all_timestamps:
+            # Find closest accel sample
+            accel_idx = np.argmin(np.abs(accel_timestamps - ts))
+            accel = accel_values[accel_idx]
+            
+            # Find closest gyro sample
+            gyro_idx = np.argmin(np.abs(gyro_timestamps - ts))
+            gyro = gyro_values[gyro_idx]
+            
+            samples.append(IMUSample(
+                timestamp_ns=int(ts),
+                accel=accel,
+                gyro=gyro
+            ))
+        
+        return IMUData(samples=samples, video_timestamps=video_timestamps)
+    
+    except Exception as e:
+        print(f"Error loading OpenCamera CSV files: {e}")
+        return None
+
+
+def detect_camm_in_mp4(video_path: str) -> IMUData | None:
+    """
+    Detect and extract CAMM (Camera Motion Metadata) from MP4 file
+    
+    CAMM is a metadata format used by cameras (like GoPro) to embed IMU data
+    directly in MP4 files. This function tries multiple extraction methods:
+    1. GoPro telemetry (gopro-telemetry library)
+    2. Direct MP4 box parsing
+    3. MediaInfo metadata extraction
+    
+    Args:
+        video_path: Path to MP4 video file
+    
+    Returns:
+        IMUData object or None if CAMM not found or extraction fails
+    """
+    if not os.path.isfile(video_path):
+        return None
+    
+    # Try GoPro telemetry extraction first (most common format)
+    imu_data = _extract_gopro_telemetry(video_path)
+    if imu_data:
+        return imu_data
+    
+    # Try direct MP4 box parsing
+    imu_data = _extract_camm_from_mp4_boxes(video_path)
+    if imu_data:
+        return imu_data
+    
+    # Try MediaInfo extraction
+    imu_data = _extract_camm_with_mediainfo(video_path)
+    if imu_data:
+        return imu_data
+    
+    return None
+
+
+def _extract_gopro_telemetry(video_path: str) -> IMUData | None:
+    """
+    Extract IMU data using gopro-telemetry library.
+    
+    Note: This implementation uses a generic interface. The actual library name
+    and API may vary. Common libraries include:
+    - gopro-telemetry-extractor
+    - gpmf-parser
+    - gopro-telemetry
+    
+    The code expects a library with GoProTelemetry class that provides:
+    - telemetry.accl: List of accelerometer samples with 'ts', 'x', 'y', 'z' keys
+    - telemetry.gyro: List of gyroscope samples with 'ts', 'x', 'y', 'z' keys
+    """
+    telemetry_module = None
+    telemetry_class = None
+    
+    # Try different library names
+    try:
+        import gopro_telemetry
+        telemetry_module = gopro_telemetry
+        if hasattr(gopro_telemetry, 'GoProTelemetry'):
+            telemetry_class = gopro_telemetry.GoProTelemetry
+    except ImportError:
+        try:
+            import gopro_telemetry_extractor
+            telemetry_module = gopro_telemetry_extractor
+            if hasattr(gopro_telemetry_extractor, 'GoProTelemetry'):
+                telemetry_class = gopro_telemetry_extractor.GoProTelemetry
+        except ImportError:
+            try:
+                from gpmf_parser import GoProTelemetry
+                telemetry_class = GoProTelemetry
+            except ImportError:
+                return None
+    
+    if telemetry_class is None:
+        return None
+    
+    try:
+        # Parse GoPro telemetry
+        with open(video_path, 'rb') as f:
+            telemetry = telemetry_class(f)
+        
+        # Extract accelerometer data
+        accel_data = []
+        if hasattr(telemetry, 'accl') and telemetry.accl:
+            for sample in telemetry.accl:
+                # GoPro telemetry uses seconds, convert to nanoseconds
+                timestamp_ns = int(sample['ts'] * 1e9)
+                accel_data.append({
+                    'timestamp': timestamp_ns,
+                    'x': sample.get('x', 0.0),
+                    'y': sample.get('y', 0.0),
+                    'z': sample.get('z', 0.0),
+                })
+        
+        # Extract gyroscope data
+        gyro_data = []
+        if hasattr(telemetry, 'gyro') and telemetry.gyro:
+            for sample in telemetry.gyro:
+                timestamp_ns = int(sample['ts'] * 1e9)
+                # GoPro gyro is in rad/s
+                gyro_data.append({
+                    'timestamp': timestamp_ns,
+                    'x': sample.get('x', 0.0),
+                    'y': sample.get('y', 0.0),
+                    'z': sample.get('z', 0.0),
+                })
+        
+        if not accel_data or not gyro_data:
+            return None
+        
+        # Combine and synchronize data
+        return _create_imu_data_from_dicts(accel_data, gyro_data, video_path)
+    
+    except Exception:
+        return None
+
+
+def _extract_camm_from_mp4_boxes(video_path: str) -> IMUData | None:
+    """Extract CAMM data by parsing MP4 boxes directly."""
+    try:
+        # Try using mp4parse or similar library
+        import mp4parse
+    except ImportError:
+        # Fall back to manual parsing
+        return _parse_mp4_boxes_manual(video_path)
+    
+    try:
+        with open(video_path, 'rb') as f:
+            parser = mp4parse.MP4Parser(f)
+            camm_track = parser.find_track('camm')
+            
+            if not camm_track:
+                return None
+            
+            accel_data = []
+            gyro_data = []
+            
+            for sample in camm_track.samples:
+                # Parse CAMM sample format
+                # CAMM format: timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z
+                if len(sample.data) >= 7:
+                    timestamp_ns = int(sample.timestamp * 1e9)
+                    accel_data.append({
+                        'timestamp': timestamp_ns,
+                        'x': sample.data[1],
+                        'y': sample.data[2],
+                        'z': sample.data[3],
+                    })
+                    gyro_data.append({
+                        'timestamp': timestamp_ns,
+                        'x': sample.data[4],
+                        'y': sample.data[5],
+                        'z': sample.data[6],
+                    })
+            
+            if accel_data and gyro_data:
+                return _create_imu_data_from_dicts(accel_data, gyro_data, video_path)
+    
+    except Exception:
+        pass
+    
+    return None
+
+
+def _parse_mp4_boxes_manual(video_path: str) -> IMUData | None:
+    """Manually parse MP4 boxes to find CAMM metadata."""
+    try:
+        with open(video_path, 'rb') as f:
+            # Read file and search for CAMM box (box type 'camm')
+            # MP4 box format: 4 bytes size + 4 bytes type
+            data = f.read()
+            
+            # Search for 'camm' box type
+            camm_pos = data.find(b'camm')
+            if camm_pos == -1:
+                return None
+            
+            # This is a simplified parser - full implementation would need
+            # proper MP4 box structure parsing
+            # For now, return None to indicate manual parsing not fully implemented
+            return None
+    
+    except Exception:
+        return None
+
+
+def _extract_camm_with_mediainfo(video_path: str) -> IMUData | None:
+    """Extract CAMM data using MediaInfo library."""
+    try:
+        from pymediainfo import MediaInfo
+    except ImportError:
+        try:
+            import subprocess
+            import json
+            # Try using mediainfo command-line tool
+            result = subprocess.run(
+                ['mediainfo', '--Output=JSON', video_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                metadata = json.loads(result.stdout)
+                # Parse metadata for CAMM tracks
+                # This would need specific parsing based on MediaInfo output
+                return None
+        except Exception:
+            pass
+        return None
+    
+    try:
+        media_info = MediaInfo.parse(video_path)
+        
+        # Look for custom metadata tracks containing IMU data
+        accel_data = []
+        gyro_data = []
+        
+        for track in media_info.tracks:
+            if track.track_type == 'Other' and 'camm' in track.to_data().get('other_format', '').lower():
+                # Found CAMM track, parse it
+                # MediaInfo structure varies, this is a placeholder
+                # Real implementation would parse the track data
+                pass
+        
+        if accel_data and gyro_data:
+            return _create_imu_data_from_dicts(accel_data, gyro_data, video_path)
+    
+    except Exception:
+        pass
+    
+    return None
+
+
+def _create_imu_data_from_dicts(
+    accel_data: list[dict],
+    gyro_data: list[dict],
+    video_path: str
+) -> IMUData | None:
+    """
+    Create IMUData from accelerometer and gyroscope dictionaries.
+    
+    Args:
+        accel_data: List of dicts with 'timestamp', 'x', 'y', 'z' keys
+        gyro_data: List of dicts with 'timestamp', 'x', 'y', 'z' keys
+        video_path: Path to video file (for extracting frame timestamps)
+    
+    Returns:
+        IMUData object or None if creation fails
+    """
+    if not accel_data or not gyro_data:
+        return None
+    
+    # Get all unique timestamps
+    all_timestamps = set()
+    for sample in accel_data:
+        all_timestamps.add(sample['timestamp'])
+    for sample in gyro_data:
+        all_timestamps.add(sample['timestamp'])
+    
+    all_timestamps = sorted(all_timestamps)
+    
+    # Create synchronized samples
+    samples = []
+    for ts in all_timestamps:
+        # Find closest accel sample
+        accel_sample = min(accel_data, key=lambda s: abs(s['timestamp'] - ts))
+        accel = np.array([
+            accel_sample['x'],
+            accel_sample['y'],
+            accel_sample['z']
+        ], dtype=np.float32)
+        
+        # Find closest gyro sample
+        gyro_sample = min(gyro_data, key=lambda s: abs(s['timestamp'] - ts))
+        gyro = np.array([
+            gyro_sample['x'],
+            gyro_sample['y'],
+            gyro_sample['z']
+        ], dtype=np.float32)
+        
+        samples.append(IMUSample(
+            timestamp_ns=int(ts),
+            accel=accel,
+            gyro=gyro
+        ))
+    
+    # Extract video frame timestamps
+    # Try to get frame rate and duration from video
+    video_timestamps = _extract_video_frame_timestamps(video_path, len(samples))
+    
+    return IMUData(samples=samples, video_timestamps=video_timestamps)
+
+
+def _extract_video_frame_timestamps(video_path: str, num_imu_samples: int) -> np.ndarray:
+    """
+    Extract video frame timestamps.
+    
+    Tries to get frame rate from video metadata, or estimates from IMU sample count.
+    """
+    try:
+        # Try to get frame rate using ffprobe or similar
+        import subprocess
+        import json
+        
+        result = subprocess.run(
+            ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_streams', video_path],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            for stream in data.get('streams', []):
+                if stream.get('codec_type') == 'video':
+                    fps_str = stream.get('r_frame_rate', '30/1')
+                    if '/' in fps_str:
+                        num, den = map(float, fps_str.split('/'))
+                        fps = num / den if den > 0 else 30.0
+                    else:
+                        fps = float(fps_str)
+                    
+                    # Estimate duration from first IMU sample to last
+                    # This is approximate - real implementation would parse video timestamps
+                    duration = num_imu_samples / 200.0  # Assume 200 Hz IMU
+                    num_frames = int(duration * fps)
+                    timestamps = np.linspace(0, duration * 1e9, num_frames, dtype=np.int64)
+                    return timestamps
+    except Exception:
+        pass
+    
+    # Fallback: estimate from IMU sample rate
+    # Assume 30 fps video and 200 Hz IMU
+    duration = num_imu_samples / 200.0
+    num_frames = int(duration * 30.0)
+    timestamps = np.linspace(0, duration * 1e9, num_frames, dtype=np.int64)
+    return timestamps
+

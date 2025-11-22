@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (c) 2025 Ahmed Essam <aessam.dahy@gmail.com>
 
+import os
 import typing
 
 import bpy
@@ -24,6 +25,7 @@ from ..operators.scene_operations import PC_OT_CenterGeometry, PC_OT_ConvertAnim
 from ..operators.tracker_management import (
     PC_OT_CreateTracker, PC_OT_DeleteTracker, PC_OT_SelectTracker)
 from ..operators.tracking import PC_OT_CancelTracking, PC_OT_TrackSequence
+from ..operators.imu_loading import PC_OT_DetectCAMM, PC_OT_LoadIMUCSV
 from ..properties import PolychaseState
 
 
@@ -467,3 +469,116 @@ class PC_PT_TrackerCameraPanel(PC_PT_PolychaseActiveTrackerBase):
 
         row = layout.row()
         row.prop(tracker, "variable_principal_point")
+
+
+class PC_PT_TrackerIMUPanel(PC_PT_PolychaseActiveTrackerBase):
+    bl_label = "IMU Settings"
+    bl_category = "Polychase"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context: bpy.types.Context):
+        state = PolychaseState.from_context(context)
+        if not state:
+            return
+
+        tracker = state.active_tracker
+        if not tracker:
+            return
+
+        layout = self.layout
+        assert layout
+
+        # Enable/Disable IMU
+        row = layout.row()
+        row.prop(tracker, "imu_enabled", text="Enable IMU Integration")
+
+        if not tracker.imu_enabled:
+            return
+
+        # File paths
+        col = layout.column(align=True)
+        col.label(text="IMU Data Sources:")
+
+        row = col.row(align=True)
+        row.prop(tracker, "imu_accel_csv_path", text="Accel")
+        op = row.operator("polychase.load_imu_csv", text="", icon="FILEBROWSER")
+        op.filepath = tracker.imu_accel_csv_path
+
+        row = col.row(align=True)
+        row.prop(tracker, "imu_gyro_csv_path", text="Gyro")
+        op = row.operator("polychase.load_imu_csv", text="", icon="FILEBROWSER")
+        op.filepath = tracker.imu_gyro_csv_path
+
+        row = col.row(align=True)
+        row.prop(tracker, "imu_timestamps_csv_path", text="Timestamps")
+        op = row.operator("polychase.load_imu_csv", text="", icon="FILEBROWSER")
+        op.filepath = tracker.imu_timestamps_csv_path
+
+        # CAMM detection button
+        if tracker.clip:
+            row = col.row()
+            row.operator("polychase.detect_camm", text="Detect CAMM in Video")
+
+        # IMU settings
+        col = layout.column(align=True)
+        col.separator()
+        col.label(text="IMU Settings:")
+
+        row = col.row()
+        row.prop(tracker, "imu_influence_weight", text="Influence Weight")
+
+        row = col.row()
+        row.prop(tracker, "imu_lock_z_axis", text="Lock Z-Axis to Gravity")
+
+        row = col.row()
+        row.prop(tracker, "imu_visualize_gravity", text="Visualize Gravity Vector")
+
+        # Quality indicators (if IMU data is loaded)
+        if tracker.imu_accel_csv_path and tracker.imu_gyro_csv_path and tracker.imu_timestamps_csv_path:
+            col = layout.column(align=True)
+            col.separator()
+            col.label(text="IMU Data Quality:")
+
+            # Try to load and show quality metrics
+            try:
+                from .. import imu_integration
+                accel_path = bpy.path.abspath(tracker.imu_accel_csv_path)
+                gyro_path = bpy.path.abspath(tracker.imu_gyro_csv_path)
+                timestamps_path = bpy.path.abspath(tracker.imu_timestamps_csv_path)
+
+                if (os.path.isfile(accel_path) and os.path.isfile(gyro_path) and
+                    os.path.isfile(timestamps_path)):
+                    imu_data = imu_integration.load_opencamera_csv(
+                        accel_path, gyro_path, timestamps_path)
+                    if imu_data:
+                        processor = imu_integration.IMUProcessor(imu_data)
+
+                        # Gravity consistency
+                        consistency = processor.get_gravity_consistency()
+                        row = col.row()
+                        row.label(text=f"Gravity Consistency: {consistency:.2%}")
+                        if consistency < 0.7:
+                            row.label(text="", icon="ERROR")
+                        elif consistency < 0.9:
+                            row.label(text="", icon="INFO")
+                        else:
+                            row.label(text="", icon="CHECKMARK")
+
+                        # Gyro drift
+                        drift = processor.get_gyro_drift()
+                        row = col.row()
+                        row.label(text=f"Gyro Drift: {drift:.4f} rad/s")
+                        if drift > 0.1:
+                            row.label(text="", icon="ERROR")
+                        elif drift > 0.05:
+                            row.label(text="", icon="INFO")
+                        else:
+                            row.label(text="", icon="CHECKMARK")
+
+                        # Sample count
+                        row = col.row()
+                        row.label(text=f"Samples: {len(imu_data)}")
+            except Exception:
+                pass  # Silently fail if data can't be loaded

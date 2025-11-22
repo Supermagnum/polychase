@@ -23,11 +23,13 @@ from .operators.scene_operations import (
 from .operators.tracker_management import (
     PC_OT_CreateTracker, PC_OT_DeleteTracker, PC_OT_SelectTracker)
 from .operators.tracking import PC_OT_CancelTracking, PC_OT_TrackSequence
+from .operators.imu_loading import PC_OT_DetectCAMM, PC_OT_LoadIMUCSV
 from .properties import PolychaseState, PolychaseTracker
 from .ui.panels import (
     PC_PT_PolychasePanel,
     PC_PT_TrackerAppearancePanel,
     PC_PT_TrackerCameraPanel,
+    PC_PT_TrackerIMUPanel,
     PC_PT_TrackerInputsPanel,
     PC_PT_TrackerOpticalFlowPanel,
     PC_PT_TrackerPinModePanel,
@@ -64,6 +66,8 @@ classes = [
     PC_OT_AddKeyFrame,
     PC_OT_RemoveKeyFrame,
     PC_OT_ClearKeyFrames,
+    PC_OT_LoadIMUCSV,
+    PC_OT_DetectCAMM,
 
     # Panels
     PC_PT_PolychasePanel,
@@ -74,6 +78,7 @@ classes = [
     PC_PT_TrackerTrackingPanel,
     PC_PT_TrackerScenePanel,
     PC_PT_TrackerAppearancePanel,
+    PC_PT_TrackerIMUPanel,
 ]
 
 

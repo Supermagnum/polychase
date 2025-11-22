@@ -7,8 +7,9 @@ import typing
 import bpy
 import bpy.types
 import mathutils
+import numpy as np
 
-from .. import core, utils, keyframes
+from .. import core, utils, keyframes, imu_integration
 from ..properties import PolychaseTracker, PolychaseState
 
 
@@ -32,6 +33,7 @@ class PC_OT_TrackSequence(bpy.types.Operator):
     _tracker_id: int = -1
     _frame_from: int = -1
     _frame_to_inclusive: int = -1
+    _imu_processor: imu_integration.IMUProcessor | None = None
 
     @classmethod
     def poll(cls, context):
@@ -142,6 +144,11 @@ class PC_OT_TrackSequence(bpy.types.Operator):
 
         # Ensure a keyframe exists at the starting frame
         self._ensure_keyframe_at_start(tracker, scene.frame_current)
+
+        # Load and initialize IMU processor if enabled
+        self._imu_processor = None
+        if tracker.imu_enabled:
+            self._imu_processor = self._load_imu_processor(tracker)
 
         self._cpp_thread = self._create_cpp_thread(
             tracker=tracker,
@@ -297,6 +304,11 @@ class PC_OT_TrackSequence(bpy.types.Operator):
 
             pose = message.pose
 
+            # Apply IMU constraints if enabled
+            if self._imu_processor and tracker.imu_enabled:
+                pose = self._apply_imu_constraints(
+                    pose, frame_id, tracker, context.scene)
+
             context.scene.frame_set(frame_id)
             geometry = tracker.geometry
             camera = tracker.camera
@@ -449,8 +461,79 @@ class PC_OT_TrackSequence(bpy.types.Operator):
                 data_paths=[
                     "location", utils.get_rotation_data_path(target_object)
                 ],
-                keytype="KEYFRAME",
-            )
+            keytype="KEYFRAME",
+        )
+
+    def _load_imu_processor(self, tracker: PolychaseTracker) -> imu_integration.IMUProcessor | None:
+        """Load and initialize IMU processor from tracker settings"""
+        if not tracker.imu_enabled:
+            return None
+
+        accel_path = bpy.path.abspath(tracker.imu_accel_csv_path)
+        gyro_path = bpy.path.abspath(tracker.imu_gyro_csv_path)
+        timestamps_path = bpy.path.abspath(tracker.imu_timestamps_csv_path)
+
+        if not (os.path.isfile(accel_path) and os.path.isfile(gyro_path) and
+                os.path.isfile(timestamps_path)):
+            return None
+
+        try:
+            imu_data = imu_integration.load_opencamera_csv(
+                accel_path, gyro_path, timestamps_path)
+            if imu_data:
+                return imu_integration.IMUProcessor(imu_data)
+        except Exception as e:
+            print(f"Error loading IMU data: {e}")
+
+        return None
+
+    def _apply_imu_constraints(
+        self,
+        pose: core.Pose,
+        frame_id: int,
+        tracker: PolychaseTracker,
+        scene: bpy.types.Scene
+    ) -> core.Pose:
+        """Apply IMU constraints to camera pose"""
+        if not self._imu_processor or tracker.imu_influence_weight <= 0.0:
+            return pose
+
+        # Convert pose quaternion to mathutils (pose.q is [w, x, y, z] from pybind)
+        pose_q = mathutils.Quaternion(
+            typing.cast(typing.Sequence[float], pose.q))
+
+        # Apply gravity-based orientation constraint
+        if tracker.imu_lock_z_axis:
+            # Lock Z-axis to gravity vector
+            constrained_q = self._imu_processor.constrain_z_axis_to_gravity(
+                pose_q, weight=tracker.imu_influence_weight)
+        else:
+            # Use gravity vector to adjust orientation
+            gravity_orientation = self._imu_processor.get_orientation_from_gravity()
+            # Blend with current pose orientation
+            constrained_q = pose_q.slerp(
+                gravity_orientation, tracker.imu_influence_weight)
+
+        # Integrate gyro for frame-to-frame rotation (if we have previous frame data)
+        # Note: This is a simplified approach. For better results, we'd need to
+        # track the previous frame's orientation separately
+        if frame_id > 0 and tracker.imu_influence_weight > 0.3:
+            # Use gyro integration as additional constraint
+            # Start from the constrained orientation
+            gyro_rot = self._imu_processor.integrate_gyro(
+                frame_id, constrained_q)
+            # Blend gyro-based rotation with gravity-constrained rotation
+            final_q = constrained_q.slerp(
+                gyro_rot, tracker.imu_influence_weight * 0.3)
+        else:
+            final_q = constrained_q
+
+        # Update pose quaternion
+        # pybind expects [w, x, y, z] format
+        pose_q_array = np.array([final_q.w, final_q.x, final_q.y, final_q.z], dtype=np.float32)
+        pose.q = typing.cast(core.np.ndarray, pose_q_array)
+
+        return pose
 
 
 class PC_OT_CancelTracking(bpy.types.Operator):

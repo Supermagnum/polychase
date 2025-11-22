@@ -1,0 +1,39 @@
+[MASTER]
+extension-pkg-whitelist=numpy,scipy,pandas
+ignore=CVS
+init-hook='import sys; sys.path.append(".")'
+
+[MESSAGES CONTROL]
+disable=
+    missing-docstring,
+    invalid-name,
+    too-few-public-methods,
+    too-many-arguments,
+    too-many-instance-attributes,
+    too-many-locals,
+    import-error,
+    no-member,
+    not-callable
+
+[FORMAT]
+max-line-length=88
+indent-string='    '
+
+[BASIC]
+good-names=i,j,k,ex,Run,_,id,q,t,r,g,b,a,x,y,z,w,h,n,m,p,rv3d,op,cls,self,context,event,obj,loc,rot,scale,tm,Rm,tv,Rv,Rmv,tmv,Rv_inv
+
+[TYPECHECK]
+ignored-modules=bpy,bpy_extras,mathutils,gpu
+ignored-classes=optparse.Values,thread._local,_thread._local
+
+[DESIGN]
+max-args=7
+max-attributes=12
+max-locals=20
+max-returns=6
+max-branches=12
+max-statements=50
+max-parents=7
+max-public-methods=20
+max-bool-expr=5
+

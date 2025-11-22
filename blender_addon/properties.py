@@ -113,6 +113,15 @@ class PolychaseTracker(bpy.types.PropertyGroup):
         camera_loc: tuple[float, float, float]
         camera_rot: tuple[float, float, float, float]
 
+        # IMU settings
+        imu_enabled: bool
+        imu_accel_csv_path: str
+        imu_gyro_csv_path: str
+        imu_timestamps_csv_path: str
+        imu_influence_weight: float
+        imu_lock_z_axis: bool
+        imu_visualize_gravity: bool
+
     else:
         id: bpy.props.IntProperty(default=0)
         name: bpy.props.StringProperty(name="Name")
@@ -211,6 +220,38 @@ class PolychaseTracker(bpy.types.PropertyGroup):
             size=3, default=[1.0, 1.0, 1.0])
         camera_loc: bpy.props.FloatVectorProperty(size=3, subtype="TRANSLATION")
         camera_rot: bpy.props.FloatVectorProperty(size=4, subtype="QUATERNION")
+
+        # IMU settings
+        imu_enabled: bpy.props.BoolProperty(
+            name="Enable IMU",
+            default=False,
+            description="Enable IMU data integration for camera tracking")
+        imu_accel_csv_path: bpy.props.StringProperty(
+            name="Accelerometer CSV",
+            description="Path to accelerometer CSV file (OpenCamera-Sensors format)",
+            subtype="FILE_PATH")
+        imu_gyro_csv_path: bpy.props.StringProperty(
+            name="Gyroscope CSV",
+            description="Path to gyroscope CSV file (OpenCamera-Sensors format)",
+            subtype="FILE_PATH")
+        imu_timestamps_csv_path: bpy.props.StringProperty(
+            name="Timestamps CSV",
+            description="Path to video frame timestamps CSV file",
+            subtype="FILE_PATH")
+        imu_influence_weight: bpy.props.FloatProperty(
+            name="IMU Influence",
+            description="Weight of IMU data in tracking (0.0 = disabled, 1.0 = full IMU)",
+            default=0.5,
+            min=0.0,
+            max=1.0)
+        imu_lock_z_axis: bpy.props.BoolProperty(
+            name="Lock Z-Axis to Gravity",
+            default=False,
+            description="Constrain camera Z-axis to align with gravity vector")
+        imu_visualize_gravity: bpy.props.BoolProperty(
+            name="Visualize Gravity Vector",
+            default=False,
+            description="Display gravity vector in 3D viewport")
 
     def get_target_object(self) -> bpy.types.Object | None:
         if self.tracking_target == "CAMERA":
