@@ -7,7 +7,8 @@ import typing
 
 Animatable = bpy.types.Object | bpy.types.Camera
 
-_supports_new_fcurves_api = bpy.app.version[0] >= 4 and bpy.app.version[1] >= 4
+_supports_new_fcurves_api = bpy.app.version[0] > 4 or (
+    bpy.app.version[0] == 4 and bpy.app.version[1] >= 4)
 
 TRANSFORMATION_DATAPATHS = [
     "location",
@@ -92,7 +93,7 @@ def clear_keyframes(
         if len(fcurve.keyframe_points) == 0:
             _remove_fcurve(obj, fcurve)
 
-    if len(obj.animation_data.action.fcurves) == 0:
+    if len(_get_fcurves_bpy_collection(obj)) == 0:
         obj.animation_data.action = None
 
     return num_deleted
@@ -315,7 +316,7 @@ def remove_keyframes_at_frame(
         if len(fcurve.keyframe_points) == 0:
             _remove_fcurve(obj, fcurve)
 
-    if len(obj.animation_data.action.fcurves) == 0:
+    if len(_get_fcurves_bpy_collection(obj)) == 0:
         obj.animation_data.action = None
 
 
