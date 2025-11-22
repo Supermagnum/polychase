@@ -225,8 +225,13 @@ class Tracker:
         if hasattr(self, "accel_mesh"):
             masked_triangles = self.accel_mesh.inner().masked_triangles
         else:
+            # Blender v5.0.0 introduced a bug where BYTE_STRING properties insert
+            # an extra null terminator.
+            # See: https://projects.blender.org/blender/blender/issues/150431
+            length = len(
+                tracker.masked_triangles) - len(tracker.masked_triangles) % 4
             masked_triangles = np.frombuffer(
-                tracker.masked_triangles, dtype=np.uint32)
+                tracker.masked_triangles[:length], dtype=np.uint32)
 
         try:
             self.accel_mesh = AcceleratedMesh(
