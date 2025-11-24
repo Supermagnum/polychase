@@ -10,6 +10,8 @@ Polychase is a 3D motion tracking solution that allows you to track camera movem
 
 ### Core Tracking Capabilities
 - **3D Pin Mode**: Place and manage tracking pins on 3D geometry
+- **Automatic Feature Detection**: Automatically detect tracking features and place pins on geometry
+- **Distance Constraints**: Set known distances from camera to pins for improved tracking accuracy
 - **Camera/Geometry Tracking**: Track camera/geometry movement through 3D space
 - **Trajectory Refinement**: Refine tracking results using bundle adjustment
 
@@ -47,7 +49,9 @@ Polychase is a 3D motion tracking solution that allows you to track camera movem
 
 4. **Pin Mode:**
    - Enter pin mode to place tracking points on your 3D geometry
-   - Add pins by clicking on the geometry surface
+   - Add pins manually by clicking on the geometry surface
+   - Or use "Auto-detect Pins" to automatically detect features and place pins
+   - Optionally set distance constraints for pins with known camera-to-pin distances
    - Drag the pins to adjust the pose of the geometry/camera
 
 5. **Track Sequence:**
@@ -71,6 +75,44 @@ Polychase is a 3D motion tracking solution that allows you to track camera movem
 - **M**: Go to mask drawing mode
 - **ESC**: Exit pin mode
 
+### Automatic Feature Detection
+
+Polychase can automatically detect good tracking features in the current video frame and place pins on your 3D geometry:
+
+1. **Enter Pin Mode** and ensure your clip, camera, and geometry are assigned
+2. **Navigate to the frame** where you want to detect features
+3. **Click "Auto-detect Pins"** in the Pin Mode panel
+4. **Configure detection settings** (optional):
+   - **Max Pins**: Maximum number of pins to create (default: 50)
+   - **Min Distance**: Minimum pixel distance between features (default: 10px)
+   - **Min Spacing**: Minimum normalized spacing between pins (default: 0.05)
+   - **Quality Threshold**: Feature quality threshold (default: 0.01)
+   - **Use Blender Tracking**: Use Blender's built-in motion tracker features
+   - **Use OpenCV GFTT**: Use OpenCV's Good Features to Track algorithm
+
+The auto-detection uses ray-casting to project detected 2D features onto your 3D geometry, automatically creating pins at the intersection points.
+
+### Distance Constraints
+
+For improved tracking accuracy, you can set known distances from the camera to specific pins:
+
+1. **Select a pin** in pin mode
+2. **Click "Set Distance"** in the Pin Mode panel
+3. **Enter the known distance** from camera to pin (in Blender units)
+4. **Pins with distance constraints** are visually indicated with a different color
+
+**What Distance Constraints Do:**
+
+- **Fix Scale**: PnP solving is scale-ambiguous. Distance constraints lock the scene scale to real-world measurements.
+- **Improve Accuracy**: The solver must satisfy both 2D reprojection errors and distance measurements simultaneously.
+- **Increase Stability**: Especially helpful with few pins or poorly distributed tracking points.
+- **Integrate Real Measurements**: Use surveyed distances, laser rangefinder measurements, or known object dimensions.
+
+Distance constraints are used as fixed measurements in the PnP solver optimization. You can:
+- **Set Distance**: Set or update the distance constraint for the selected pin
+- **Remove Distance**: Remove the distance constraint from the selected pin
+- **Snap to Distance**: Move the pin along the camera ray to match a known distance
+
 ## Technical Details
 
 ### Architecture
@@ -82,9 +124,10 @@ Polychase is a 3D motion tracking solution that allows you to track camera movem
 ### Algorithms
 
 - **Optical Flow**: Off-the-shelf OpenCV solution
-- **3D Tracking**: PnP (Perspective-n-Point) solving for camera pose estimation
+- **3D Tracking**: PnP (Perspective-n-Point) solving for camera pose estimation with distance constraint support
 - **Bundle Adjustment**: Global non-linear optimization for trajectory refinement
 - **Ray Casting**: Accelerated mesh intersection using Embree
+- **Feature Detection**: Automatic feature detection using Blender's motion tracker and OpenCV's Good Features to Track (GFTT)
 - **IMU Processing**: Gravity vector extraction via low-pass filtering, gyroscope integration for orientation estimation, and sensor fusion with optical flow tracking
 
 ## IMU Integration
@@ -210,6 +253,7 @@ The IMU Settings panel displays quality indicators:
 
 **Optional (but recommended):**
 - `pandas`: For CSV file parsing (required for OpenCamera-Sensors CSV format)
+- `opencv-python`: For automatic feature detection using Good Features to Track (GFTT) algorithm
 - `gopro-telemetry`: For GoPro GPMF/CAMM extraction from GoPro videos
 - `pymediainfo`: For generic CAMM extraction via MediaInfo (alternative: install `mediainfo` command-line tool)
 
@@ -220,6 +264,9 @@ pip install numpy scipy
 
 # For CSV support (OpenCamera-Sensors)
 pip install pandas
+
+# For automatic feature detection
+pip install opencv-python
 
 # For GoPro CAMM support
 pip install gopro-telemetry
