@@ -16,7 +16,8 @@ static inline void SolvePnPIterative(
     const PnPOptions &opts, PnPResult &result) {
     PnPProblem problem(
         image_points, object_points, weights, opts.optimize_focal_length,
-        opts.optimize_principal_point, result.camera.intrinsics.GetBounds());
+        opts.optimize_principal_point,
+        result.camera.intrinsics.GetBounds(opts.min_fov_deg, opts.max_fov_deg));
 
     PnPProblem::Parameters params{
         .cam = result.camera,

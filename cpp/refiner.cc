@@ -678,13 +678,10 @@ static void RefineTrajectory(const Database& database, CameraTrajectory& traj,
     };
 
     GlobalRefinementProblem problem{
-        cached_database,
-        mesh,
-        model_matrix,
-        traj,
-        optimize_focal_length,
+        cached_database, mesh, model_matrix, traj, optimize_focal_length,
         optimize_principal_point,
-        traj.Get(traj.FirstFrame())->intrinsics.GetBounds()};
+        // FIXME: Make fov limits customizable in refinement
+        traj.Get(traj.FirstFrame())->intrinsics.GetBounds(15.0f, 160.0f)};
 
     LevMarqSparseSolve(problem, loss_fn, &traj, bundle_opts, callback_wrapper);
 }

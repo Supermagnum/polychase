@@ -153,7 +153,13 @@ struct CameraIntrinsics {
         Float cy_high;
     };
 
-    Bounds GetBounds(Float min_fov_deg = 15, Float max_fov_deg = 160) const {
+    Bounds GetBounds(Float min_fov_deg, Float max_fov_deg) const {
+        CHECK_GE(min_fov_deg, 0);
+        CHECK_LT(min_fov_deg, 180);
+
+        CHECK_GT(max_fov_deg, 0);
+        CHECK_LE(max_fov_deg, 180);
+
         const Float min_fov = min_fov_deg * M_PI / 180;
         const Float max_fov = max_fov_deg * M_PI / 180;
 
