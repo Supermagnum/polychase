@@ -10,10 +10,10 @@
 
 template <typename LossFunction>
 static inline void SolvePnPIterative(
-    const RefConstRowMajorMatrixX3f &object_points,
-    const RefConstRowMajorMatrixX2f &image_points,
-    const RefConstArrayXf &weights, const LossFunction &loss_fn,
-    const PnPOptions &opts, PnPResult &result) {
+    const RefConstRowMajorMatrixX3f& object_points,
+    const RefConstRowMajorMatrixX2f& image_points,
+    const RefConstArrayXf& weights, const LossFunction& loss_fn,
+    const PnPOptions& opts, PnPResult& result) {
     PnPProblem problem(
         image_points, object_points, weights, opts.optimize_focal_length,
         opts.optimize_principal_point,
@@ -48,10 +48,10 @@ static inline void SolvePnPIterative(
         static_cast<Float>(num_inliers) / problem.NumResiduals();
 }
 
-void SolvePnPIterative(const RefConstRowMajorMatrixX3f &object_points,
-                       const RefConstRowMajorMatrixX2f &image_points,
-                       const RefConstArrayXf &weights, const PnPOptions &opts,
-                       PnPResult &result) {
+void SolvePnPIterative(const RefConstRowMajorMatrixX3f& object_points,
+                       const RefConstRowMajorMatrixX2f& image_points,
+                       const RefConstArrayXf& weights, const PnPOptions& opts,
+                       PnPResult& result) {
     CHECK_EQ(object_points.rows(), image_points.rows());
     CHECK_GE(object_points.rows(), 3);
 
@@ -71,9 +71,9 @@ void SolvePnPIterative(const RefConstRowMajorMatrixX3f &object_points,
     }
 }
 
-void SolvePnPIterative(const RefConstRowMajorMatrixX3f &object_points,
-                       const RefConstRowMajorMatrixX2f &image_points,
-                       const PnPOptions &opts, PnPResult &result) {
+void SolvePnPIterative(const RefConstRowMajorMatrixX3f& object_points,
+                       const RefConstRowMajorMatrixX2f& image_points,
+                       const PnPOptions& opts, PnPResult& result) {
     ArrayXf weights;
     SolvePnPIterative(object_points, image_points, weights, opts, result);
 }

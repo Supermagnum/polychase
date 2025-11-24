@@ -22,9 +22,9 @@ class PnPProblem {
     static constexpr int kNumParams = 9;
     static constexpr int kResidualLength = 2;
 
-    PnPProblem(const RefConstRowMajorMatrixX2f &points2D,
-               const RefConstRowMajorMatrixX3f &points3D,
-               const RefConstArrayXf &weights,
+    PnPProblem(const RefConstRowMajorMatrixX2f& points2D,
+               const RefConstRowMajorMatrixX3f& points3D,
+               const RefConstArrayXf& weights,
                bool optimize_focal_length = false,
                bool optimize_principal_point = false,
                CameraIntrinsics::Bounds bounds = {})
@@ -49,7 +49,7 @@ class PnPProblem {
         }
     }
 
-    std::optional<Eigen::Vector2f> Evaluate(const Parameters &params,
+    std::optional<Eigen::Vector2f> Evaluate(const Parameters& params,
                                             size_t idx) const {
         const Eigen::Vector3f Z = params.cam.pose.Apply(X.row(idx));
         if (params.cam.intrinsics.IsBehind(Z)) {
@@ -60,12 +60,12 @@ class PnPProblem {
         return z - Eigen::Vector2f(x.row(idx));
     }
 
-    bool EvaluateWithJacobian(const Parameters &params, size_t idx,
-                              RowMajorMatrixf<kResidualLength, kNumParams> &J,
-                              Eigen::Vector2f &res) const {
-        const Pose &pose = params.cam.pose;
-        const CameraIntrinsics &intrin = params.cam.intrinsics;
-        const RowMajorMatrix3f &R = params.R;
+    bool EvaluateWithJacobian(const Parameters& params, size_t idx,
+                              RowMajorMatrixf<kResidualLength, kNumParams>& J,
+                              Eigen::Vector2f& res) const {
+        const Pose& pose = params.cam.pose;
+        const CameraIntrinsics& intrin = params.cam.intrinsics;
+        const RowMajorMatrix3f& R = params.R;
 
         const Eigen::Vector3f Z = X.row(idx);
 
@@ -98,11 +98,11 @@ class PnPProblem {
         return true;
     }
 
-    void Step(const Parameters &params,
-              const RowMajorMatrixf<kNumParams, 1> &dp,
-              Parameters &result) const {
-        const CameraState &camera = params.cam;
-        CameraState &camera_new = result.cam;
+    void Step(const Parameters& params,
+              const RowMajorMatrixf<kNumParams, 1>& dp,
+              Parameters& result) const {
+        const CameraState& camera = params.cam;
+        CameraState& camera_new = result.cam;
 
         camera_new.pose.q = QuatStepPost(camera.pose.q, dp.block<3, 1>(0, 0));
         camera_new.pose.t = camera.pose.t + dp.block<3, 1>(3, 0);

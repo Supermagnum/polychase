@@ -2,3 +2,5 @@ BasedOnStyle: Google
 IndentWidth: 4
 Language: Cpp
 ColumnLimit: 80
+PointerAlignment: Left
+DerivePointerAlignment: false

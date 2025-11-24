@@ -58,17 +58,17 @@ struct CameraIntrinsics {
         // clang-format on
     }
 
-    Eigen::Vector2f Project(const Eigen::Vector2f &x) const {
+    Eigen::Vector2f Project(const Eigen::Vector2f& x) const {
         return Eigen::Vector2f(fx * x(0) + cx, fy * x(1) + cy);
     }
 
-    Eigen::Vector2f Project(const Eigen::Vector3f &x) const {
+    Eigen::Vector2f Project(const Eigen::Vector3f& x) const {
         return Eigen::Vector2f(fx * x(0) / x(2) + cx, fy * x(1) / x(2) + cy);
     }
 
-    void ProjectWithJac(const Eigen::Vector3f &x, Eigen::Vector2f *xp,
-                        RowMajorMatrixf<2, 3> *jac_x = nullptr,
-                        RowMajorMatrixf<2, 3> *jac_intrin = nullptr) const {
+    void ProjectWithJac(const Eigen::Vector3f& x, Eigen::Vector2f* xp,
+                        RowMajorMatrixf<2, 3>* jac_x = nullptr,
+                        RowMajorMatrixf<2, 3>* jac_intrin = nullptr) const {
         (*xp)(0) = fx * x(0) / x(2) + cx;
         (*xp)(1) = fy * x(1) / x(2) + cy;
 
@@ -92,14 +92,14 @@ struct CameraIntrinsics {
         }
     }
 
-    Eigen::Vector3f Unproject(const Eigen::Vector2f &x) const {
+    Eigen::Vector3f Unproject(const Eigen::Vector2f& x) const {
         const float s = convention == CameraConvention::OpenCV ? 1.0f : -1.0f;
         return s * Eigen::Vector3f((x(0) - cx) / fx, (x(1) - cy) / fy, 1.0f);
     }
 
-    void UnprojectWithJac(const Eigen::Vector2f &x, Eigen::Vector3f *xup,
-                          RowMajorMatrixf<3, 3> *jac_x = nullptr,
-                          RowMajorMatrixf<3, 3> *jac_intrin = nullptr) const {
+    void UnprojectWithJac(const Eigen::Vector2f& x, Eigen::Vector3f* xup,
+                          RowMajorMatrixf<3, 3>* jac_x = nullptr,
+                          RowMajorMatrixf<3, 3>* jac_intrin = nullptr) const {
         const float s = convention == CameraConvention::OpenCV ? 1.0f : -1.0f;
 
         (*xup)(0) = s * (x(0) - cx) / fx;
@@ -126,7 +126,7 @@ struct CameraIntrinsics {
 
     float Focal() const { return std::abs((fx + fy) / 2.0f); }
 
-    inline bool IsBehind(const Eigen::Vector3f &p) const {
+    inline bool IsBehind(const Eigen::Vector3f& p) const {
         return convention == CameraConvention::OpenCV ? p.z() < 0.0f
                                                       : p.z() > 0.0f;
     }
