@@ -18,6 +18,8 @@ from ..operators.keyframe_management import (
     PC_OT_PrevKeyFrame,
     PC_OT_RemoveKeyFrame)
 from ..operators.open_clip import PC_OT_OpenClip
+from ..operators.autodetect_pins import PC_OT_AutodetectPins
+from ..operators.pin_distance import PC_OT_SetPinDistance, PC_OT_SnapPinToDistance
 from ..operators.pin_mode import PC_OT_PinMode, PC_OT_ClearPins
 from ..operators.refiner import PC_OT_CancelRefining, PC_OT_RefineSequence
 from ..operators.refresh_geometry import PC_OT_RefreshGeometry
@@ -26,6 +28,7 @@ from ..operators.tracker_management import (
     PC_OT_CreateTracker, PC_OT_DeleteTracker, PC_OT_SelectTracker)
 from ..operators.tracking import PC_OT_CancelTracking, PC_OT_TrackSequence
 from ..operators.imu_loading import PC_OT_DetectCAMM, PC_OT_LoadIMUCSV
+from .. import core
 from ..properties import PolychaseState
 
 
@@ -168,6 +171,38 @@ class PC_PT_TrackerPinModePanel(PC_PT_PolychaseActiveTrackerBase):
         col.operator(PC_OT_CenterGeometry.bl_idname)
         if transient.in_pinmode:
             col.operator(PC_OT_ClearPins.bl_idname)
+            
+            # Distance constraints section
+            if tracker.selected_pin_idx >= 0:
+                col.separator()
+                box = col.box()
+                box.label(text="Distance Constraint", icon="CONSTRAINT")
+                
+                # Show current distance if set
+                tracker_core = core.Tracker.get(tracker)
+                if tracker_core:
+                    pin_mode = tracker_core.pin_mode
+                    current_distance = pin_mode.get_pin_distance(tracker.selected_pin_idx)
+                    if current_distance is not None:
+                        row = box.row()
+                        row.label(text=f"Current: {current_distance:.3f}")
+                        row.operator(PC_OT_SetPinDistance.bl_idname, text="Edit", icon="EDIT")
+                        row.operator(PC_OT_SetPinDistance.bl_idname, text="Remove", icon="X").distance = 0.0
+                    else:
+                        box.operator(PC_OT_SetPinDistance.bl_idname, icon="ADD")
+                        box.operator(PC_OT_SnapPinToDistance.bl_idname, icon="SNAP_ON")
+        
+        # Auto-detect pins section
+        if not transient.in_pinmode:
+            col.separator()
+            box = col.box()
+            box.label(text="Auto-detect Pins", icon="AUTO")
+            box.prop(tracker, "autodetect_max_pins")
+            box.prop(tracker, "autodetect_min_spacing")
+            box.prop(tracker, "autodetect_quality_threshold")
+            box.prop(tracker, "autodetect_use_blender_tracking")
+            box.prop(tracker, "autodetect_use_opencv")
+            box.operator(PC_OT_AutodetectPins.bl_idname, icon="VIEWZOOM")
 
 class PC_PT_TrackerScenePanel(PC_PT_PolychaseActiveTrackerBase):
     bl_label = "Scene"

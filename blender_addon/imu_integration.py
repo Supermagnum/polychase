@@ -10,12 +10,17 @@ Supports OpenCamera-Sensors CSV format and CAMM (Camera Motion Metadata) from MP
 """
 
 import os
+import sys
 import typing
+import importlib.util
 from dataclasses import dataclass
 
 import numpy as np
-from scipy import signal
-from scipy.interpolate import interp1d
+
+# Optional scipy dependency - will be set by automatic detection
+SCIPY_AVAILABLE = False
+signal = None
+interp1d = None
 
 try:
     import mathutils
@@ -89,10 +94,253 @@ except (ImportError, AttributeError):
     
     mathutils = MockMathutils()
 
-try:
-    import pandas as pd
-except ImportError:
-    pd = None
+# Automatic feature detection for optional dependencies
+# Feature detection state
+_pandas_available = False
+_pandas_version = None
+_pandas_import_error = None
+pd = None
+
+_scipy_available = False
+_scipy_version = None
+_scipy_import_error = None
+
+
+def _find_package_locations(package_name: str) -> list[str]:
+    """
+    Search for a package in common installation locations.
+    
+    Returns list of directory paths where the package might be found.
+    """
+    locations = []
+    
+    # Check current sys.path
+    for path in sys.path:
+        package_path = os.path.join(path, package_name)
+        if os.path.exists(package_path):
+            locations.append(path)
+    
+    # Common Flatpak Python paths
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    flatpak_paths = [
+        f'/var/data/python/lib/python{python_version}/site-packages',
+        f'/var/data/python/lib/python3.11/site-packages',
+        f'/var/data/python/lib/python3.12/site-packages',
+        os.path.expanduser(f'~/.local/lib/python{python_version}/site-packages'),
+        os.path.expanduser('~/.local/lib/python3.11/site-packages'),
+        os.path.expanduser('~/.local/lib/python3.12/site-packages'),
+    ]
+    
+    # Check Flatpak paths
+    for path in flatpak_paths:
+        if os.path.exists(path):
+            package_path = os.path.join(path, package_name)
+            if os.path.exists(package_path) and path not in locations:
+                locations.append(path)
+    
+    # Check system-wide locations
+    system_paths = [
+        f'/usr/lib/python{python_version}/site-packages',
+        f'/usr/local/lib/python{python_version}/site-packages',
+    ]
+    for path in system_paths:
+        if os.path.exists(path):
+            package_path = os.path.join(path, package_name)
+            if os.path.exists(package_path) and path not in locations:
+                locations.append(path)
+    
+    return locations
+
+
+def _try_import_package(package_name: str, module_name: str = None) -> tuple[bool, str | None, str | None]:
+    """
+    Try multiple strategies to import a package.
+    
+    Args:
+        package_name: Name of the package directory (e.g., 'pandas')
+        module_name: Name to import (defaults to package_name)
+    
+    Returns:
+        (success, version, error_message)
+    """
+    if module_name is None:
+        module_name = package_name
+    
+    # Strategy 1: Direct import
+    try:
+        module = __import__(module_name)
+        version = getattr(module, '__version__', None)
+        return True, version, None
+    except ImportError as e:
+        error_msg = str(e)
+    
+    # Strategy 2: Find package locations and add to sys.path
+    locations = _find_package_locations(package_name)
+    added_paths = []
+    
+    for location in locations:
+        if location not in sys.path:
+            sys.path.insert(0, location)
+            added_paths.append(location)
+    
+    # Try importing again after adding paths
+    if added_paths:
+        try:
+            module = __import__(module_name)
+            version = getattr(module, '__version__', None)
+            return True, version, None
+        except ImportError as e2:
+            error_msg = str(e2)
+    
+    # Strategy 3: Try importlib.util for direct module loading
+    for location in locations:
+        package_path = os.path.join(location, package_name)
+        if os.path.exists(package_path):
+            init_file = os.path.join(package_path, '__init__.py')
+            if os.path.exists(init_file):
+                try:
+                    spec = importlib.util.spec_from_file_location(
+                        module_name, init_file
+                    )
+                    if spec and spec.loader:
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+                        version = getattr(module, '__version__', None)
+                        # Register in sys.modules
+                        sys.modules[module_name] = module
+                        return True, version, None
+                except Exception:
+                    pass
+    
+    # Build comprehensive error message
+    if locations:
+        error_msg = (
+            f"{error_msg}\n"
+            f"Package '{package_name}' appears to be installed in: {locations}\n"
+            f"Added paths to sys.path: {added_paths}\n"
+            f"This may require restarting Blender or reloading the addon."
+        )
+    
+    return False, None, error_msg
+
+
+def _detect_features():
+    """Automatically detect and import optional dependencies."""
+    global _pandas_available, _pandas_version, _pandas_import_error, pd
+    global _scipy_available, _scipy_version, _scipy_import_error
+    
+    # Detect pandas
+    success, version, error = _try_import_package('pandas', 'pandas')
+    if success:
+        try:
+            import pandas as pd
+            _pandas_available = True
+            _pandas_version = pd.__version__ if pd is not None else version
+            _pandas_import_error = None
+        except Exception as e:
+            _pandas_available = False
+            _pandas_version = None
+            _pandas_import_error = str(e)
+            pd = None
+    else:
+        _pandas_available = False
+        _pandas_version = None
+        _pandas_import_error = error
+        pd = None
+    
+    # Detect scipy (update SCIPY_AVAILABLE)
+    global SCIPY_AVAILABLE, signal, interp1d
+    success, version, error = _try_import_package('scipy', 'scipy')
+    if success:
+        try:
+            from scipy import signal
+            from scipy.interpolate import interp1d
+            _scipy_available = True
+            _scipy_version = version
+            _scipy_import_error = None
+            SCIPY_AVAILABLE = True
+        except Exception as e:
+            _scipy_available = False
+            _scipy_version = None
+            _scipy_import_error = str(e)
+            SCIPY_AVAILABLE = False
+            # Set up fallback implementations
+            def butter(order, cutoff, btype='low'):
+                """Simple fallback for scipy.signal.butter - returns None to indicate unavailable"""
+                return None, None
+            
+            def filtfilt(b, a, x):
+                """Simple fallback - returns unfiltered data if scipy not available"""
+                return x
+            
+            signal = type('signal', (), {'butter': butter, 'filtfilt': filtfilt})()
+            interp1d = None
+    else:
+        _scipy_available = False
+        _scipy_version = None
+        _scipy_import_error = error
+        SCIPY_AVAILABLE = False
+        # Set up fallback implementations
+        def butter(order, cutoff, btype='low'):
+            """Simple fallback for scipy.signal.butter - returns None to indicate unavailable"""
+            return None, None
+        
+        def filtfilt(b, a, x):
+            """Simple fallback - returns unfiltered data if scipy not available"""
+            return x
+        
+        signal = type('signal', (), {'butter': butter, 'filtfilt': filtfilt})()
+        interp1d = None
+
+
+# Run automatic feature detection
+_detect_features()
+
+
+def refresh_feature_detection():
+    """
+    Re-run automatic feature detection.
+    
+    Call this function if you've installed pandas/scipy after the addon was loaded.
+    This will search for packages again and update the availability status.
+    """
+    _detect_features()
+    return {
+        'pandas': {
+            'available': _pandas_available,
+            'version': _pandas_version,
+            'error': _pandas_import_error
+        },
+        'scipy': {
+            'available': _scipy_available,
+            'version': _scipy_version,
+            'error': _scipy_import_error
+        }
+    }
+
+
+def get_feature_status():
+    """
+    Get current status of optional dependencies.
+    
+    Returns:
+        dict with 'pandas' and 'scipy' keys, each containing:
+        - 'available': bool
+        - 'version': str or None
+        - 'error': str or None
+    """
+    return {
+        'pandas': {
+            'available': _pandas_available,
+            'version': _pandas_version,
+            'error': _pandas_import_error
+        },
+        'scipy': {
+            'available': _scipy_available,
+            'version': _scipy_version,
+            'error': _scipy_import_error
+        }
+    }
 
 
 @dataclass
@@ -145,12 +393,16 @@ class IMUData:
         
         # Interpolate accelerometer
         accel_data = np.array([[s.accel[0], s.accel[1], s.accel[2]] for s in self.samples])
+        if interp1d is None:
+            raise ImportError("scipy is required for timestamp interpolation. Install with: pip install scipy")
         accel_interp = interp1d(timestamps, accel_data, axis=0, kind='linear', 
                                bounds_error=False, fill_value='extrapolate')
         accel = accel_interp(timestamp_ns)
         
         # Interpolate gyroscope
         gyro_data = np.array([[s.gyro[0], s.gyro[1], s.gyro[2]] for s in self.samples])
+        if interp1d is None:
+            raise ImportError("scipy is required for timestamp interpolation. Install with: pip install scipy")
         gyro_interp = interp1d(timestamps, gyro_data, axis=0, kind='linear',
                               bounds_error=False, fill_value='extrapolate')
         gyro = gyro_interp(timestamp_ns)
@@ -197,14 +449,25 @@ class IMUProcessor:
         accel_data = np.array([[s.accel[0], s.accel[1], s.accel[2]] for s in self.imu_data.samples])
         
         # Design low-pass filter to isolate gravity
-        nyquist = self.sample_rate_hz / 2.0
-        normal_cutoff = self.lowpass_cutoff / nyquist
-        b, a = signal.butter(self.lowpass_order, normal_cutoff, btype='low')
-        
-        # Apply filter to each axis
-        filtered_accel = np.zeros_like(accel_data)
-        for i in range(3):
-            filtered_accel[:, i] = signal.filtfilt(b, a, accel_data[:, i])
+        if SCIPY_AVAILABLE:
+            nyquist = self.sample_rate_hz / 2.0
+            normal_cutoff = self.lowpass_cutoff / nyquist
+            b, a = signal.butter(self.lowpass_order, normal_cutoff, btype='low')
+            
+            # Apply filter to each axis
+            filtered_accel = np.zeros_like(accel_data)
+            for i in range(3):
+                filtered_accel[:, i] = signal.filtfilt(b, a, accel_data[:, i])
+        else:
+            # Fallback: simple moving average filter (less accurate but works without scipy)
+            window_size = int(self.sample_rate_hz / self.lowpass_cutoff)  # Approximate filter window
+            window_size = max(1, min(window_size, len(accel_data) // 2))  # Clamp to reasonable range
+            
+            filtered_accel = np.zeros_like(accel_data)
+            for i in range(3):
+                # Simple moving average
+                kernel = np.ones(window_size) / window_size
+                filtered_accel[:, i] = np.convolve(accel_data[:, i], kernel, mode='same')
         
         # Use median of filtered data as gravity vector (more robust than mean)
         self._gravity_vector = np.median(filtered_accel, axis=0)
@@ -422,7 +685,21 @@ def load_opencamera_csv(accel_path: str, gyro_path: str,
         IMUData object or None if loading fails
     """
     if pd is None:
-        raise ImportError("pandas is required for CSV loading. Install with: pip install pandas")
+        import_error_msg = _pandas_import_error if '_pandas_import_error' in globals() else 'Module not found'
+        error_msg = (
+            "pandas is required for CSV loading but is not installed.\n"
+            f"Import error: {import_error_msg}\n\n"
+            "Installation options:\n"
+            "1. Blender 4.2+: Should install automatically via blender_manifest.toml\n"
+            "   - Check that blender_manifest.toml includes pandas in [dependencies]\n"
+            "   - Try disabling and re-enabling the addon to trigger dependency installation\n"
+            "2. Manual installation (Blender's Python console):\n"
+            "   import subprocess, sys\n"
+            "   subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pandas>=1.5.0'])\n"
+            "3. System-wide (if Blender uses system Python):\n"
+            "   pip install pandas>=1.5.0"
+        )
+        raise ImportError(error_msg)
     
     try:
         # Load accelerometer data

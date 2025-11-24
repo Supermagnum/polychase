@@ -316,12 +316,33 @@ PYBIND11_MODULE(polychase_core, m) {
           py::arg("accel_mesh"), py::arg("scene_transform"), py::arg("pos"),
           py::arg("check_mask"));
 
-    m.def("find_transformation", FindTransformation,
+    m.def("find_transformation",
+          py::overload_cast<const RefConstRowMajorMatrixX3f&,
+                            const SceneTransformations&,
+                            const SceneTransformations&,
+                            const PinUpdate&,
+                            TransformationType,
+                            bool, bool>(FindTransformation),
           py::arg("object_points").noconvert(),
           py::arg("initial_scene_transform"),
           py::arg("current_scene_transform"), py::arg("update"),
           py::arg("trans_type"), py::arg("optimize_focal_length") = false,
           py::arg("optimize_principal_point") = false);
+    
+    m.def("find_transformation",
+          py::overload_cast<const RefConstRowMajorMatrixX3f&,
+                            const SceneTransformations&,
+                            const SceneTransformations&,
+                            const PinUpdate&,
+                            TransformationType,
+                            bool, bool,
+                            const RefConstArrayXf&>(FindTransformation),
+          py::arg("object_points").noconvert(),
+          py::arg("initial_scene_transform"),
+          py::arg("current_scene_transform"), py::arg("update"),
+          py::arg("trans_type"), py::arg("optimize_focal_length") = false,
+          py::arg("optimize_principal_point") = false,
+          py::arg("distance_constraints").noconvert());
 
     m.def("generate_optical_flow_database", GenerateOpticalFlowDatabase,
           py::arg("video_info"), py::arg("frame_accessor_function"),

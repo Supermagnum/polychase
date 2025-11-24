@@ -482,8 +482,13 @@ class PC_OT_TrackSequence(bpy.types.Operator):
                 accel_path, gyro_path, timestamps_path)
             if imu_data:
                 return imu_integration.IMUProcessor(imu_data)
+        except ImportError as e:
+            # Pandas not installed - IMU is optional, so just warn
+            print(f"Warning: IMU data loading skipped - {e}")
+            print("Tracking will continue without IMU constraints.")
         except Exception as e:
             print(f"Error loading IMU data: {e}")
+            print("Tracking will continue without IMU constraints.")
 
         return None
 

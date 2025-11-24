@@ -10,7 +10,7 @@ authors = [{name = "Ahmed Essam", email = "aessam.dahy@gmail.com"}]
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["COPYING"]
-requires-python = "==3.11"
+requires-python = ">=3.11"
 
 [project.urls]
 Homepage = "https://github.com/theartful/polychase"

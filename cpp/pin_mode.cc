@@ -18,7 +18,8 @@ static SceneTransformations FindTransformationN(
     const SceneTransformations& initial_scene_transform,
     const SceneTransformations& current_scene_transform,
     const PinUpdate& update, TransformationType trans_type,
-    bool optimize_focal_length, bool optimize_principal_point) {
+    bool optimize_focal_length, bool optimize_principal_point,
+    const RefConstArrayXf& distance_constraints) {
     CHECK_GT(object_points.rows(), 2);
 
     // Step 1: Project points
@@ -72,7 +73,18 @@ static SceneTransformations FindTransformationN(
         .optimize_principal_point = optimize_principal_point,
     };
 
-    SolvePnPIterative(object_points_cameraspace, image_points, opts, result);
+    // Extract distance constraints for camera-space points
+    ArrayXf distance_constraints_cameraspace;
+    if (distance_constraints.rows() > 0 && distance_constraints.rows() == object_points.rows()) {
+        // Distance constraints are in world space, but we're solving in camera space
+        // The distance constraint ||R*X + t|| = d is equivalent in camera space
+        // since we're solving for the camera pose
+        distance_constraints_cameraspace = distance_constraints;
+    }
+    
+    ArrayXf weights;  // Empty weights for now
+    SolvePnPIterative(object_points_cameraspace, image_points, weights, 
+                      distance_constraints_cameraspace, opts, result);
 
     const RowMajorMatrix3f result_R = result.camera.pose.R();
     const Eigen::Vector3f result_t = result.camera.pose.t;
@@ -222,6 +234,20 @@ SceneTransformations FindTransformation(
     const SceneTransformations& current_scene_transform,
     const PinUpdate& update, TransformationType trans_type,
     bool optimize_focal_length, bool optimize_principal_point) {
+    ArrayXf distance_constraints;  // Empty by default
+    return FindTransformation(object_points, initial_scene_transform,
+                              current_scene_transform, update, trans_type,
+                              optimize_focal_length, optimize_principal_point,
+                              distance_constraints);
+}
+
+SceneTransformations FindTransformation(
+    const RefConstRowMajorMatrixX3f& object_points,
+    const SceneTransformations& initial_scene_transform,
+    const SceneTransformations& current_scene_transform,
+    const PinUpdate& update, TransformationType trans_type,
+    bool optimize_focal_length, bool optimize_principal_point,
+    const RefConstArrayXf& distance_constraints) {
     CHECK_LT(update.pin_idx, object_points.rows());
 
     switch (object_points.rows()) {
@@ -241,6 +267,7 @@ SceneTransformations FindTransformation(
             return FindTransformationN(object_points, initial_scene_transform,
                                        current_scene_transform, update,
                                        trans_type, optimize_focal_length,
-                                       optimize_principal_point);
+                                       optimize_principal_point,
+                                       distance_constraints);
     }
 }

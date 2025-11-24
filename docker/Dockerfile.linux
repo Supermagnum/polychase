@@ -17,17 +17,25 @@ COPY vcpkg-ports vcpkg-ports
 
 RUN ${VCPKG_ROOT}/vcpkg install --triplet x64-linux --overlay-triplets=vcpkg-triplets --overlay-ports=vcpkg-ports
 
-# Build python3.11
-RUN wget https://www.python.org/ftp/python/3.11.13/Python-3.11.13.tgz
-RUN tar xzf Python-3.11.13.tgz
-RUN cd Python-3.11.13 && ./configure --enable-optimizations && make -j `nproc` && make -j `nproc` altinstall
+# Build python3.12 (for Blender 5.0)
+RUN wget https://www.python.org/ftp/python/3.12.8/Python-3.12.8.tgz
+RUN tar xzf Python-3.12.8.tgz
+RUN cd Python-3.12.8 && ./configure --enable-optimizations && make -j `nproc` && make -j `nproc` altinstall
 
-RUN /usr/local/bin/pip3.11 install build
-RUN /usr/local/bin/pip3.11 install scikit-build-core
-RUN /usr/local/bin/pip3.11 install auditwheel
+RUN /usr/local/bin/pip3.12 install build
+RUN /usr/local/bin/pip3.12 install scikit-build-core
+RUN /usr/local/bin/pip3.12 install auditwheel
 
 WORKDIR /work/polychase-src
 COPY . .
+
+# Initialize and update git submodules (pybind11 and cvnp)
+# Docker COPY doesn't include .git, so we need to clone submodules directly
+RUN rm -rf cpp/external/pybind11 cpp/external/cvnp && \
+    mkdir -p cpp/external && \
+    cd cpp/external && \
+    git clone --depth 1 https://github.com/pybind/pybind11.git && \
+    git clone --depth 1 https://github.com/theartful/cvnp.git
 
 ARG VCPKG_ROOT=/work/vcpkg
 ARG VCPKG_DEPS=/work/vcpkg_deps
@@ -37,6 +45,14 @@ ARG CMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
 ARG VCPKG_OVERLAY_TRIPLETS="${VCPKG_DEPS}/vcpkg-triplets"
 ARG VCPKG_OVERLAY_PORTS="${VCPKG_DEPS}/vcpkg-ports"
 
-RUN /usr/local/bin/python3.11 -m build --wheel --no-isolation -Ccmake.args="-DCMAKE_BUILD_TYPE=Release;-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE};-DVCPKG_INSTALLED_DIR=${VCPKG_INSTALLED_DIR};-DVCPKG_OVERLAY_TRIPLETS=${VCPKG_OVERLAY_TRIPLETS};-DVCPKG_OVERLAY_PORTS=${VCPKG_OVERLAY_PORTS};-DVCPKG_TARGET_TRIPLET=x64-linux;-DPYTHON_EXECUTABLE=/usr/local/bin/python3.11;-DDEVELOPMENT_INSTALL=OFF"
+# Verify vcpkg packages were installed (especially OpenCV)
+RUN ls -la ${VCPKG_INSTALLED_DIR}/x64-linux/share/opencv4/ || (echo "OpenCV not found in vcpkg_installed, listing contents:" && ls -la ${VCPKG_INSTALLED_DIR}/x64-linux/share/ 2>/dev/null || echo "vcpkg_installed directory not found")
 
-RUN /usr/local/bin/python3.11 -m auditwheel repair ./dist/*
+# Build wheel with vcpkg toolchain
+# Note: vcpkg toolchain file should automatically set CMAKE_PREFIX_PATH
+# We also set VCPKG_ROOT as an environment variable for the toolchain
+# Explicitly set OpenCV_DIR since scikit-build-core may not properly use the toolchain
+ENV VCPKG_ROOT=${VCPKG_ROOT}
+RUN /usr/local/bin/python3.12 -m build --wheel --no-isolation -Ccmake.args="-DCMAKE_BUILD_TYPE=Release;-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE};-DCMAKE_PREFIX_PATH=${VCPKG_INSTALLED_DIR}/x64-linux;-DOpenCV_DIR=${VCPKG_INSTALLED_DIR}/x64-linux/share/opencv4;-DVCPKG_INSTALLED_DIR=${VCPKG_INSTALLED_DIR};-DVCPKG_OVERLAY_TRIPLETS=${VCPKG_OVERLAY_TRIPLETS};-DVCPKG_OVERLAY_PORTS=${VCPKG_OVERLAY_PORTS};-DVCPKG_TARGET_TRIPLET=x64-linux;-DPYTHON_EXECUTABLE=/usr/local/bin/python3.12;-DDEVELOPMENT_INSTALL=OFF"
+
+RUN /usr/local/bin/python3.12 -m auditwheel repair ./dist/*

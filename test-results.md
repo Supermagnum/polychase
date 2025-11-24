@@ -1,8 +1,8 @@
 # Polychase Test Results
 
-This document contains the latest test results for the Polychase Blender addon with IMU integration.
+This document contains the latest test results for the Polychase Blender addon with IMU integration and distance constraint support.
 
-**Last Updated:** Generated automatically during test runs
+**Last Updated:** 2025-11-24
 
 ## Test Summary
 
@@ -13,14 +13,14 @@ This document contains the latest test results for the Polychase Blender addon w
 - **Skipped:** 7 (performance benchmarks - require pytest-benchmark)
 - **Failed:** 0
 - **Warnings:** 2 (expected warnings for invalid data handling)
-- **Test Duration:** ~19 seconds
+- **Test Duration:** ~30 seconds
 
 ### Coverage Results
 
 - **Module:** `blender_addon.imu_integration`
-- **Statements:** 379
-- **Missing:** 114
-- **Coverage:** 70%
+- **Statements:** 528
+- **Missing:** 211
+- **Coverage:** 60.04%
 - **Threshold:** 60% (PASSED)
 
 ## Test Breakdown by Category
@@ -56,11 +56,11 @@ This document contains the latest test results for the Polychase Blender addon w
 ### Property-Based Tests (10 tests)
 
 **Hypothesis-Generated Tests:**
-- `test_gravity_vector_normalization` - PASSED (50 examples)
-- `test_gyro_integration_quaternion_properties` - PASSED (50 examples)
-- `test_imu_data_scalability` - PASSED (20 examples)
-- `test_timestamp_interpolation` - PASSED (30 examples)
-- `test_orientation_blending_weights` - PASSED (20 examples)
+- `test_gravity_vector_normalization` - PASSED
+- `test_gyro_integration_quaternion_properties` - PASSED
+- `test_imu_data_scalability` - PASSED
+- `test_timestamp_interpolation` - PASSED
+- `test_orientation_blending_weights` - PASSED
 
 **Boundary Conditions:**
 - `test_zero_acceleration` - PASSED
@@ -168,7 +168,7 @@ These warnings are intentional and verify that the code handles malformed data g
 - CAMM detection framework (multiple extraction methods)
 - Error handling for malformed data
 
-### Uncovered Code (30%)
+### Uncovered Code (40%)
 
 The uncovered code primarily consists of:
 
@@ -187,7 +187,7 @@ This is acceptable as these paths are either:
 
 ### Property-Based Testing
 
-- **Total Examples Generated:** ~170 examples across 5 property-based tests
+- **Total Examples Generated:** Multiple examples across 5 property-based tests
 - **Edge Cases Found:** Automatically discovered boundary conditions
 - **Invariants Verified:** Gravity normalization, quaternion properties, data scalability
 
@@ -231,6 +231,16 @@ pytest tests/test_imu_robustness.py -v
 - `tests/conftest.py` - Shared test fixtures
 - `tests/data_generators.py` - Mock data generation utilities
 
+## Recent Changes
+
+### Distance Constraint Integration (2025-11-24)
+
+- Added distance constraint support to PnP solver
+- Integrated distance constraints into pin mode transformations
+- Added UI for setting pin distances
+- Visual indicators for pins with distance constraints
+- C++ extension rebuilt with distance constraint support
+
 ## Conclusion
 
 All critical functionality is thoroughly tested with:
@@ -238,7 +248,6 @@ All critical functionality is thoroughly tested with:
 - Comprehensive property-based testing with Hypothesis
 - Extensive robustness testing for malformed data
 - Memory profiling and leak detection
-- 70% code coverage (exceeding 60% threshold)
+- 60.04% code coverage (meeting 60% threshold)
 
 The test suite provides confidence in the IMU integration module's correctness, robustness, and reliability.
-

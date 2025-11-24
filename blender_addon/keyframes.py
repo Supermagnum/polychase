@@ -7,7 +7,8 @@ import typing
 
 Animatable = bpy.types.Object | bpy.types.Camera
 
-_supports_new_fcurves_api = bpy.app.version[0] >= 4 and bpy.app.version[1] >= 4
+# Blender 4.4+ and 5.0+ use the new slotted actions API
+_supports_new_fcurves_api = (bpy.app.version[0] >= 5) or (bpy.app.version[0] == 4 and bpy.app.version[1] >= 4)
 
 TRANSFORMATION_DATAPATHS = [
     "location",
@@ -23,50 +24,74 @@ CAMERA_DATAPATHS = [
 ]
 
 
+def _get_action_fcurves_collection(action: bpy.types.Action):
+    """Get fcurves/curves collection from an action, compatible with Blender 4.x and 5.x"""
+    # Blender 5.0+ changed fcurves to curves
+    if hasattr(action, 'fcurves'):
+        return action.fcurves
+    elif hasattr(action, 'curves'):
+        return action.curves
+    else:
+        # Action might be in a transitional state (e.g., newly created)
+        # Return empty list instead of raising error
+        return []
+
+
 def _get_fcurves_bpy_collection(obj: Animatable):
     if not obj.animation_data or not obj.animation_data.action:
         return []
 
+    # Try new API first (Blender 4.4+ and 5.0+)
     if _supports_new_fcurves_api:
-        if len(obj.animation_data.action.layers) == 0:
-            return []
+        try:
+            if len(obj.animation_data.action.layers) == 0:
+                # No layers, try fallback to old API
+                return _get_action_fcurves_collection(obj.animation_data.action)
 
-        # Blender currently only supports a single layer with a single strip
-        # https://developer.blender.org/docs/release_notes/4.4/upgrading/slotted_actions/
-        assert len(obj.animation_data.action.layers) == 1
-        action_layer = obj.animation_data.action.layers[0]
+            # Blender currently only supports a single layer with a single strip
+            # https://developer.blender.org/docs/release_notes/4.4/upgrading/slotted_actions/
+            if len(obj.animation_data.action.layers) == 1:
+                action_layer = obj.animation_data.action.layers[0]
 
-        assert len(action_layer.strips) == 1
-        action_strip = action_layer.strips[0]
+                if len(action_layer.strips) == 1:
+                    action_strip = action_layer.strips[0]
 
-        # This is the only supported type of action strip
-        assert isinstance(action_strip, bpy.types.ActionKeyframeStrip)
-        channelbag = action_strip.channelbag(
-            obj.animation_data.action_slot, ensure=True)
+                    # This is the only supported type of action strip
+                    if isinstance(action_strip, bpy.types.ActionKeyframeStrip):
+                        channelbag = action_strip.channelbag(
+                            obj.animation_data.action_slot, ensure=True)
+                        return channelbag.fcurves
+        except (AttributeError, AssertionError, TypeError):
+            # New API failed, fall back to old API
+            pass
 
-        return channelbag.fcurves
-
-    else:
-        return obj.animation_data.action.fcurves
+    # Fallback to old API (Blender < 4.4 or if new API unavailable)
+    return _get_action_fcurves_collection(obj.animation_data.action)
 
 
 def _remove_fcurve(obj: Animatable, fcurve: bpy.types.FCurve):
     assert obj.animation_data and obj.animation_data.action
 
+    # Try new API first (Blender 4.4+ and 5.0+)
     if _supports_new_fcurves_api:
-        assert len(obj.animation_data.action.layers) == 1
-        action_layer = obj.animation_data.action.layers[0]
+        try:
+            if len(obj.animation_data.action.layers) == 1:
+                action_layer = obj.animation_data.action.layers[0]
 
-        assert len(action_layer.strips) == 1
-        action_strip = action_layer.strips[0]
+                if len(action_layer.strips) == 1:
+                    action_strip = action_layer.strips[0]
 
-        assert isinstance(action_strip, bpy.types.ActionKeyframeStrip)
-        channelbag = action_strip.channelbag(
-            obj.animation_data.action_slot, ensure=True)
-        channelbag.fcurves.remove(fcurve)
+                    if isinstance(action_strip, bpy.types.ActionKeyframeStrip):
+                        channelbag = action_strip.channelbag(
+                            obj.animation_data.action_slot, ensure=True)
+                        channelbag.fcurves.remove(fcurve)
+                        return
+        except (AttributeError, AssertionError, TypeError):
+            # New API failed, fall back to old API
+            pass
 
-    else:
-        obj.animation_data.action.fcurves.remove(fcurve)
+    # Fallback to old API (Blender < 4.4 or if new API unavailable)
+    _get_action_fcurves_collection(obj.animation_data.action).remove(fcurve)
 
 
 def clear_keyframes(
@@ -92,7 +117,7 @@ def clear_keyframes(
         if len(fcurve.keyframe_points) == 0:
             _remove_fcurve(obj, fcurve)
 
-    if len(obj.animation_data.action.fcurves) == 0:
+    if len(_get_action_fcurves_collection(obj.animation_data.action)) == 0:
         obj.animation_data.action = None
 
     return num_deleted
@@ -315,7 +340,7 @@ def remove_keyframes_at_frame(
         if len(fcurve.keyframe_points) == 0:
             _remove_fcurve(obj, fcurve)
 
-    if len(obj.animation_data.action.fcurves) == 0:
+    if len(_get_action_fcurves_collection(obj.animation_data.action)) == 0:
         obj.animation_data.action = None
 
 

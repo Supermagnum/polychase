@@ -22,6 +22,7 @@ def get_points_shader() -> gpu.types.GPUShader:
         gl_Position = mvp * vec4(position, 1.0f);
         gl_PointSize = point_size;
         is_selected_out = is_selected;
+        has_distance_out = has_distance;
     }
     """)
     shader_info.fragment_source(
@@ -38,24 +39,32 @@ def get_points_shader() -> gpu.types.GPUShader:
         if (dist > 1.0)
             discard; // Outside the circle
 
+        vec4 base_color;
         if (is_selected_out == 1)
-            fragColor = selected_color * alpha;
+            base_color = selected_color;
+        else if (has_distance_out == 1)
+            base_color = distance_color;  // Different color for pins with distance constraints
         else
-            fragColor = default_color * alpha;
+            base_color = default_color;
+        
+        fragColor = base_color * alpha;
     }
     """)
     vert_out = gpu.types.GPUStageInterfaceInfo(
         "polychase_point_interface")    # type: ignore
     vert_out.flat("UINT", "is_selected_out")
+    vert_out.flat("UINT", "has_distance_out")
 
     shader_info.vertex_in(0, "VEC3", "position")
     shader_info.vertex_in(1, "UINT", "is_selected")
+    shader_info.vertex_in(2, "UINT", "has_distance")
     shader_info.vertex_out(vert_out)
     shader_info.fragment_out(0, "VEC4", "fragColor")
     shader_info.push_constant("FLOAT", "point_size")
     shader_info.push_constant("MAT4", "mvp")
     shader_info.push_constant("VEC4", "default_color")
     shader_info.push_constant("VEC4", "selected_color")
+    shader_info.push_constant("VEC4", "distance_color")
 
     return gpu.shader.create_from_info(shader_info)
 
@@ -204,13 +213,22 @@ class PinModeRenderer:
         data = self._get_pin_mode_data()
         points = data.points if len(data.points) > 0 else []
         is_selected = data.is_selected if len(data.is_selected) > 0 else []
+        distances = data.distances if len(data.distances) > 0 else []
+        
+        # Create has_distance array: 1 if distance is valid (not NaN and > 0), 0 otherwise
+        has_distance = np.zeros(len(points), dtype=np.uint32)
+        if len(distances) == len(points):
+            for i, dist in enumerate(distances):
+                if not np.isnan(dist) and dist > 0:
+                    has_distance[i] = 1
 
         return batch_for_shader(
             pins_shader,
             "POINTS",
             {
                 "position": typing.cast(typing.Sequence, points),
-                "is_selected": typing.cast(typing.Sequence, is_selected)
+                "is_selected": typing.cast(typing.Sequence, is_selected),
+                "has_distance": typing.cast(typing.Sequence, has_distance)
             })
 
     def _create_wireframe_batch(self, tracker_core: core.Tracker):
@@ -289,6 +307,8 @@ class PinModeRenderer:
             "default_color", tracker.default_pin_color)
         self.pins_shader.uniform_float(
             "selected_color", tracker.selected_pin_color)
+        self.pins_shader.uniform_float(
+            "distance_color", tracker.pin_distance_color)
         gpu.state.depth_mask_set(False)
         self.pins_batch.draw(self.pins_shader)
 

@@ -89,6 +89,7 @@ class PolychaseTracker(bpy.types.PropertyGroup):
         selected_pin_idx: int
         pinmode_optimize_focal_length: bool
         pinmode_optimize_principal_point: bool
+        pin_distances: bytes  # Optional distance constraints per pin (float32 array)
 
         # State for drawing 3D masks
         mask_selection_radius: float
@@ -101,6 +102,7 @@ class PolychaseTracker(bpy.types.PropertyGroup):
         # Appearance
         default_pin_color: tuple[float, float, float, float]
         selected_pin_color: tuple[float, float, float, float]
+        pin_distance_color: tuple[float, float, float, float]
         pin_radius: float
         wireframe_color: tuple[float, float, float, float]
         wireframe_width: float
@@ -121,6 +123,14 @@ class PolychaseTracker(bpy.types.PropertyGroup):
         imu_influence_weight: float
         imu_lock_z_axis: bool
         imu_visualize_gravity: bool
+        
+        # Auto-detect pins settings
+        autodetect_max_pins: int
+        autodetect_min_distance: float
+        autodetect_min_spacing: float
+        autodetect_quality_threshold: float
+        autodetect_use_blender_tracking: bool
+        autodetect_use_opencv: bool
 
     else:
         id: bpy.props.IntProperty(default=0)
@@ -157,6 +167,7 @@ class PolychaseTracker(bpy.types.PropertyGroup):
         selected_pin_idx: bpy.props.IntProperty(default=-1)
         pinmode_optimize_focal_length: bpy.props.BoolProperty(default=False)
         pinmode_optimize_principal_point: bpy.props.BoolProperty(default=False)
+        pin_distances: bpy.props.StringProperty(subtype="BYTE_STRING")  # Optional distance constraints per pin
 
         # State for drawing 3D masks
         mask_selection_radius: bpy.props.FloatProperty(
@@ -192,6 +203,14 @@ class PolychaseTracker(bpy.types.PropertyGroup):
             min=0.0,
             max=1.0,
             default=[1.0, 0.0, 0.0, 1.0])
+        pin_distance_color: bpy.props.FloatVectorProperty(
+            name="Pin Distance Color",
+            subtype="COLOR",
+            size=4,
+            min=0.0,
+            max=1.0,
+            default=[0.0, 1.0, 0.0, 1.0],
+            description="Color for pins with distance constraints")
         pin_radius: bpy.props.FloatProperty(
             name="Pin Radius", min=0.0, max=100.0, default=10.0)
         wireframe_color: bpy.props.FloatVectorProperty(
@@ -252,6 +271,40 @@ class PolychaseTracker(bpy.types.PropertyGroup):
             name="Visualize Gravity Vector",
             default=False,
             description="Display gravity vector in 3D viewport")
+        
+        # Auto-detect pins settings
+        autodetect_max_pins: bpy.props.IntProperty(
+            name="Max Pins",
+            default=50,
+            min=1,
+            max=500,
+            description="Maximum number of pins to create")
+        autodetect_min_distance: bpy.props.FloatProperty(
+            name="Min Distance",
+            default=10.0,
+            min=1.0,
+            max=100.0,
+            description="Minimum distance between features in pixels (OpenCV)")
+        autodetect_min_spacing: bpy.props.FloatProperty(
+            name="Min Spacing",
+            default=0.05,
+            min=0.0,
+            max=1.0,
+            description="Minimum spacing between pins in normalized coordinates [0, 1]")
+        autodetect_quality_threshold: bpy.props.FloatProperty(
+            name="Quality Threshold",
+            default=0.01,
+            min=0.001,
+            max=1.0,
+            description="Feature quality threshold (lower = more features, OpenCV)")
+        autodetect_use_blender_tracking: bpy.props.BoolProperty(
+            name="Use Blender Tracking",
+            default=True,
+            description="Use Blender's motion tracking markers if available")
+        autodetect_use_opencv: bpy.props.BoolProperty(
+            name="Use OpenCV",
+            default=True,
+            description="Use OpenCV feature detection (requires opencv-python)")
 
     def get_target_object(self) -> bpy.types.Object | None:
         if self.tracking_target == "CAMERA":

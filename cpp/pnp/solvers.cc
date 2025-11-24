@@ -12,11 +12,14 @@ template <typename LossFunction>
 static inline void SolvePnPIterative(
     const RefConstRowMajorMatrixX3f &object_points,
     const RefConstRowMajorMatrixX2f &image_points,
-    const RefConstArrayXf &weights, const LossFunction &loss_fn,
+    const RefConstArrayXf &weights,
+    const RefConstArrayXf &distance_constraints,
+    const LossFunction &loss_fn,
     const PnPOptions &opts, PnPResult &result) {
     PnPProblem problem(
-        image_points, object_points, weights, opts.optimize_focal_length,
-        opts.optimize_principal_point, result.camera.intrinsics.GetBounds());
+        image_points, object_points, weights, distance_constraints,
+        opts.optimize_focal_length, opts.optimize_principal_point,
+        result.camera.intrinsics.GetBounds());
 
     PnPProblem::Parameters params{
         .cam = result.camera,
@@ -51,6 +54,15 @@ void SolvePnPIterative(const RefConstRowMajorMatrixX3f &object_points,
                        const RefConstRowMajorMatrixX2f &image_points,
                        const RefConstArrayXf &weights, const PnPOptions &opts,
                        PnPResult &result) {
+    ArrayXf distance_constraints;
+    SolvePnPIterative(object_points, image_points, weights, distance_constraints, opts, result);
+}
+
+void SolvePnPIterative(const RefConstRowMajorMatrixX3f &object_points,
+                       const RefConstRowMajorMatrixX2f &image_points,
+                       const RefConstArrayXf &weights,
+                       const RefConstArrayXf &distance_constraints,
+                       const PnPOptions &opts, PnPResult &result) {
     CHECK_EQ(object_points.rows(), image_points.rows());
     CHECK_GE(object_points.rows(), 3);
 
@@ -58,7 +70,7 @@ void SolvePnPIterative(const RefConstRowMajorMatrixX3f &object_points,
 #define SWITCH_LOSS_FUNCTION_CASE(LossFunction)                                \
     {                                                                          \
         LossFunction loss_fn(opts.bundle_opts.loss_scale);                     \
-        SolvePnPIterative(object_points, image_points, weights, loss_fn, opts, \
+        SolvePnPIterative(object_points, image_points, weights, distance_constraints, loss_fn, opts, \
                           result);                                             \
     }
         SWITCH_LOSS_FUNCTIONS
@@ -74,5 +86,6 @@ void SolvePnPIterative(const RefConstRowMajorMatrixX3f &object_points,
                        const RefConstRowMajorMatrixX2f &image_points,
                        const PnPOptions &opts, PnPResult &result) {
     ArrayXf weights;
-    SolvePnPIterative(object_points, image_points, weights, opts, result);
+    ArrayXf distance_constraints;
+    SolvePnPIterative(object_points, image_points, weights, distance_constraints, opts, result);
 }

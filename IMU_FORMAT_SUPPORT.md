@@ -4,7 +4,7 @@ This document details the actual implementation status of IMU data format suppor
 
 ## Fully Implemented and Tested
 
-### OpenCamera-Sensors CSV Format ✅
+### OpenCamera-Sensors CSV Format
 
 **Status:** Fully implemented and tested
 
@@ -36,7 +36,7 @@ The code tries multiple extraction methods in order:
 3. MediaInfo extraction (via pymediainfo or mediainfo CLI)
 
 **GoPro GPMF Support:**
-- **Code Status:** ✅ Implemented
+- **Code Status:** Implemented
 - **Function:** `_extract_gopro_telemetry()` in `blender_addon/imu_integration.py`
 - **Library Support:** Tries multiple library names:
   - `gopro_telemetry`
@@ -48,14 +48,14 @@ The code tries multiple extraction methods in order:
 - **Test Status:** Framework tested, requires actual GoPro video files for full validation
 
 **Generic CAMM Support:**
-- **Code Status:** ⚠️ Framework exists, not fully functional
+- **Code Status:** Framework exists, not fully functional
 - **Function:** `_extract_camm_from_mp4_boxes()` in `blender_addon/imu_integration.py`
 - **Library Support:** Requires `mp4parse` library (not a standard library)
 - **Manual Parsing:** `_parse_mp4_boxes_manual()` exists but returns None (not fully implemented)
 - **Limitations:** Full MP4 box parsing requires proper MP4 container structure understanding
 
 **MediaInfo Support:**
-- **Code Status:** ⚠️ Framework exists, placeholder implementation
+- **Code Status:** Framework exists, placeholder implementation
 - **Function:** `_extract_camm_with_mediainfo()` in `blender_addon/imu_integration.py`
 - **Library Support:** Tries `pymediainfo` or `mediainfo` command-line tool
 - **Limitations:** Actual CAMM track parsing is not implemented (placeholder code)
@@ -76,11 +76,11 @@ The code tries multiple extraction methods in order:
 
 | Format | Implementation Status | Testing Status | Library Requirements |
 |--------|----------------------|----------------|---------------------|
-| OpenCamera-Sensors CSV | ✅ Fully Implemented | ✅ 17+ tests passing | pandas (required) |
-| GoPro GPMF | ✅ Code Implemented | ⚠️ Framework tested | gopro-telemetry* (optional) |
-| Generic CAMM | ⚠️ Framework Only | ⚠️ Basic tests | mp4parse/pymediainfo (optional) |
-| Sony XAVC RTMD | ❌ Not Implemented | ❌ Not tested | N/A |
-| Insta360 CAMM | ❌ Not Implemented | ❌ Not tested | N/A |
+| OpenCamera-Sensors CSV | Fully Implemented | 17+ tests passing | pandas (required) |
+| GoPro GPMF | Code Implemented | Framework tested | gopro-telemetry* (optional) |
+| Generic CAMM | Framework Only | Basic tests | mp4parse/pymediainfo (optional) |
+| Sony XAVC RTMD | Not Implemented | Not tested | N/A |
+| Insta360 CAMM | Not Implemented | Not tested | N/A |
 
 *Library name may vary - code tries multiple common names
 

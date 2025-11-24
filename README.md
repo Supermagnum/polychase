@@ -119,7 +119,7 @@ The metadata is stored as a metadata track within the MP4 file, making it easy t
 
 **Currently Supported CAMM Formats:**
 
-- **GoPro GPMF (General Purpose Metadata Format)**: ✅ **Supported**
+- **GoPro GPMF (General Purpose Metadata Format)**: **Supported**
   - HERO5 and later store accelerometer, gyroscope and high frequency GPS as a track within MP4 files
   - Extraction code implemented - requires compatible GoPro telemetry extraction library
   - Automatically detected and extracted from GoPro MP4 files when library is available

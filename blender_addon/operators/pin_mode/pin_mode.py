@@ -152,6 +152,17 @@ class PC_OT_PinMode(bpy.types.Operator):
         ) @ mathutils.Vector((ndc_pos[0], ndc_pos[1], 0.5, 1.0))
         pos = mathutils.Vector((pos[0] / pos[3], pos[1] / pos[3]))
 
+        # Get distance constraints for pins
+        distances = pin_mode.distances
+        distance_constraints = None
+        if len(distances) == len(pin_mode.points):
+            # Convert to numpy array, keeping NaN for pins without constraints
+            distance_constraints = distances.copy()
+        else:
+            # No distances or mismatch - use empty array
+            distance_constraints = np.full(
+                (len(pin_mode.points),), np.nan, dtype=np.float32)
+        
         return core.find_transformation(
             object_points=pin_mode.points,
             initial_scene_transform=self._initial_scene_transform,
@@ -167,6 +178,7 @@ class PC_OT_PinMode(bpy.types.Operator):
             trans_type=trans_type,
             optimize_focal_length=optimize_focal_length,
             optimize_principal_point=optimize_principal_point,
+            distance_constraints=distance_constraints,
         )
 
     def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> set:

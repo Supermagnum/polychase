@@ -27,3 +27,9 @@ void SolvePnPIterative(const RefConstRowMajorMatrixX3f& object_points,
                        const RefConstRowMajorMatrixX2f& image_points,
                        const RefConstArrayXf& weights, const PnPOptions& opts,
                        PnPResult& result);
+
+void SolvePnPIterative(const RefConstRowMajorMatrixX3f& object_points,
+                       const RefConstRowMajorMatrixX2f& image_points,
+                       const RefConstArrayXf& weights,
+                       const RefConstArrayXf& distance_constraints,
+                       const PnPOptions& opts, PnPResult& result);
