@@ -125,6 +125,24 @@ PYBIND11_MODULE(polychase_core, m) {
         .def_readwrite("first_frame", &VideoInfo::first_frame)
         .def_readwrite("num_frames", &VideoInfo::num_frames);
 
+    py::class_<PnPOptions>(m, "PnPOptions")
+        .def(py::init<>())
+        .def_readwrite("bundle_opts", &PnPOptions::bundle_opts)
+        .def_readwrite("max_inlier_error", &PnPOptions::max_inlier_error)
+        .def_readwrite("min_fov_deg", &PnPOptions::min_fov_deg)
+        .def_readwrite("max_fov_deg", &PnPOptions::max_fov_deg)
+        .def_readwrite("optimize_focal_length",
+                       &PnPOptions::optimize_focal_length)
+        .def_readwrite("optimize_principal_point",
+                       &PnPOptions::optimize_principal_point);
+
+    py::class_<TrackerOptions>(m, "TrackerOptions")
+        .def(py::init<>())
+        .def_readwrite("pnp_opts", &TrackerOptions::pnp_opts)
+        .def_readwrite("frame_from", &TrackerOptions::frame_from)
+        .def_readwrite("frame_to_inclusive",
+                       &TrackerOptions::frame_to_inclusive);
+
     py::class_<GFTTOptions>(m, "GFTTOptions")
         .def(py::init<>())
         .def_readwrite("quality_level", &GFTTOptions::quality_level)
@@ -145,13 +163,10 @@ PYBIND11_MODULE(polychase_core, m) {
                        &OpticalFlowOptions::min_eigen_threshold);
 
     py::class_<TrackerThread>(m, "TrackerThread")
-        .def(py::init<std::string, int32_t, int32_t, SceneTransformations,
-                      std::shared_ptr<const AcceleratedMesh>, bool, bool,
-                      BundleOptions>(),
-             py::arg("database_path"), py::arg("frame_from"),
-             py::arg("frame_to_inclusive"), py::arg("scene_transform"),
-             py::arg("accel_mesh"), py::arg("optimize_focal_length"),
-             py::arg("optimize_principal_point"), py::arg("bundle_opts"))
+        .def(py::init<std::string, SceneTransformations,
+                      std::shared_ptr<const AcceleratedMesh>, TrackerOptions>(),
+             py::arg("database_path"), py::arg("scene_transform"),
+             py::arg("accel_mesh"), py::arg("opts"))
         .def("request_stop", &TrackerThread::RequestStop)
         .def("join", &TrackerThread::Join)
         .def("try_pop", &TrackerThread::TryPop)
@@ -278,14 +293,12 @@ PYBIND11_MODULE(polychase_core, m) {
 
     py::class_<PnPResult>(m, "PnPResult")
         .def_readwrite("camera", &PnPResult::camera)
-        .def_readwrite("bundle_stats", &PnPResult::bundle_stats);
+        .def_readwrite("bundle_stats", &PnPResult::bundle_stats)
+        .def_readwrite("inlier_ratio", &PnPResult::inlier_ratio);
 
-    py::class_<FrameTrackingResult>(m, "FrameTrackingResult")
-        .def_readwrite("frame", &FrameTrackingResult::frame)
-        .def_readwrite("pose", &FrameTrackingResult::pose)
-        .def_readwrite("intrinsics", &FrameTrackingResult::intrinsics)
-        .def_readwrite("bundle_stats", &FrameTrackingResult::bundle_stats)
-        .def_readwrite("inlier_ratio", &FrameTrackingResult::inlier_ratio);
+    py::class_<TrackerUpdate>(m, "TrackerUpdate")
+        .def_readwrite("frame", &TrackerUpdate::frame)
+        .def_readwrite("pnp_result", &TrackerUpdate::pnp_result);
 
     py::class_<CameraTrajectory, std::shared_ptr<CameraTrajectory>>(
         m, "CameraTrajectory")
@@ -329,20 +342,5 @@ PYBIND11_MODULE(polychase_core, m) {
           py::arg("detector_options") = GFTTOptions{},
           py::arg("flow_options") = OpticalFlowOptions{},
           py::arg("write_images") = false,
-          py::call_guard<py::gil_scoped_release>());
-
-    m.def("track_sequence", TrackSequence, py::arg("database_path"),
-          py::arg("frame_from"), py::arg("frame_to_inclusive"),
-          py::arg("scene_transform"), py::arg("accel_mesh"),
-          py::arg("callback"), py::arg("optimize_focal_length") = false,
-          py::arg("optimize_principal_point") = false,
-          py::arg("bundle_opts") = BundleOptions(),
-          py::call_guard<py::gil_scoped_release>());
-
-    m.def("refine_trajectory", RefineTrajectory, py::arg("database_path"),
-          py::arg("camera_trajectory"), py::arg("model_matrix"),
-          py::arg("mesh"), py::arg("optimize_focal_length"),
-          py::arg("optimize_principal_point"), py::arg("callback"),
-          py::arg("bundle_opts") = BundleOptions(),
           py::call_guard<py::gil_scoped_release>());
 }
