@@ -13,23 +13,20 @@
 #include "refiner.h"
 
 using RefinerThreadMessage =
-    std::variant<RefineTrajectoryUpdate, bool, std::unique_ptr<std::exception>>;
+    std::variant<RefinerUpdate, bool, std::unique_ptr<std::exception>>;
 
 class RefinerThread {
    public:
     RefinerThread(std::string database_path,
                   std::shared_ptr<CameraTrajectory> traj,
                   RowMajorMatrix4f model_matrix,
-                  std::shared_ptr<const AcceleratedMesh> mesh,
-                  bool optimize_focal_length, bool optimize_principal_point,
-                  BundleOptions bundle_opts)
+                  std::shared_ptr<const AcceleratedMesh> accel_mesh,
+                  RefinerOptions opts)
         : database_path(database_path),
           traj(std::move(traj)),
           model_matrix(model_matrix),
-          mesh(std::move(mesh)),
-          optimize_focal_length(optimize_focal_length),
-          optimize_principal_point(optimize_principal_point),
-          bundle_opts(bundle_opts) {
+          accel_mesh(std::move(accel_mesh)),
+          opts(opts) {
         worker_thread =
             std::jthread{std::bind_front(&RefinerThread::Work, this)};
     }
@@ -58,16 +55,14 @@ class RefinerThread {
 
    private:
     void Work(std::stop_token stop_token) {
-        auto callback = [this,
-                         &stop_token](RefineTrajectoryUpdate refine_update) {
-            results_queue.push(refine_update);
+        auto callback = [this, &stop_token](RefinerUpdate update) {
+            results_queue.push(update);
             return !stop_token.stop_requested();
         };
 
         try {
-            RefineTrajectory(database_path, *traj, model_matrix, *mesh,
-                             optimize_focal_length, optimize_principal_point,
-                             callback, bundle_opts);
+            RefineTrajectory(database_path, *traj, model_matrix, *accel_mesh,
+                             callback, opts);
         } catch (const std::exception& exception) {
             SPDLOG_ERROR("Error: {}", exception.what());
             results_queue.push(std::make_unique<std::exception>(exception));
@@ -85,10 +80,8 @@ class RefinerThread {
     const std::string database_path;
     const std::shared_ptr<CameraTrajectory> traj;
     const RowMajorMatrix4f model_matrix;
-    const std::shared_ptr<const AcceleratedMesh> mesh;
-    const bool optimize_focal_length;
-    const bool optimize_principal_point;
-    const BundleOptions bundle_opts;
+    const std::shared_ptr<const AcceleratedMesh> accel_mesh;
+    const RefinerOptions opts;
 
     tbb::concurrent_queue<RefinerThreadMessage> results_queue;
 

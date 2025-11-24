@@ -143,6 +143,16 @@ PYBIND11_MODULE(polychase_core, m) {
         .def_readwrite("frame_to_inclusive",
                        &TrackerOptions::frame_to_inclusive);
 
+    py::class_<RefinerOptions>(m, "RefinerOptions")
+        .def(py::init<>())
+        .def_readwrite("bundle_opts", &RefinerOptions::bundle_opts)
+        .def_readwrite("min_fov_deg", &RefinerOptions::min_fov_deg)
+        .def_readwrite("max_fov_deg", &RefinerOptions::max_fov_deg)
+        .def_readwrite("optimize_focal_length",
+                       &RefinerOptions::optimize_focal_length)
+        .def_readwrite("optimize_principal_point",
+                       &RefinerOptions::optimize_principal_point);
+
     py::class_<GFTTOptions>(m, "GFTTOptions")
         .def(py::init<>())
         .def_readwrite("quality_level", &GFTTOptions::quality_level)
@@ -175,11 +185,9 @@ PYBIND11_MODULE(polychase_core, m) {
     py::class_<RefinerThread>(m, "RefinerThread")
         .def(py::init<std::string, std::shared_ptr<CameraTrajectory>,
                       RowMajorMatrix4f, std::shared_ptr<const AcceleratedMesh>,
-                      bool, bool, BundleOptions>(),
+                      RefinerOptions>(),
              py::arg("database_path"), py::arg("camera_trajectory"),
-             py::arg("model_matrix"), py::arg("mesh"),
-             py::arg("optimize_focal_length"),
-             py::arg("optimize_principal_point"), py::arg("bundle_opts"))
+             py::arg("model_matrix"), py::arg("accel_mesh"), py::arg("opts"))
         .def("request_stop", &RefinerThread::RequestStop)
         .def("join", &RefinerThread::Join)
         .def("try_pop", &RefinerThread::TryPop)
@@ -315,10 +323,10 @@ PYBIND11_MODULE(polychase_core, m) {
         .def("first_frame", &CameraTrajectory::FirstFrame)
         .def("last_frame", &CameraTrajectory::LastFrame);
 
-    py::class_<RefineTrajectoryUpdate>(m, "RefineTrajectoryUpdate")
-        .def_readwrite("progress", &RefineTrajectoryUpdate::progress)
-        .def_readwrite("message", &RefineTrajectoryUpdate::message)
-        .def_readwrite("stats", &RefineTrajectoryUpdate::stats);
+    py::class_<RefinerUpdate>(m, "RefinerUpdate")
+        .def_readwrite("progress", &RefinerUpdate::progress)
+        .def_readwrite("message", &RefinerUpdate::message)
+        .def_readwrite("stats", &RefinerUpdate::stats);
 
     py::class_<std::exception>(m, "CppException")
         .def("what", &std::exception::what);

@@ -361,18 +361,20 @@ class PC_OT_RefineSequence(bpy.types.Operator):
         model_matrix = mathutils.Matrix.Diagonal(
             geometry.matrix_world.to_scale().to_4d())
 
-        bundle_opts = core.BundleOptions()
-        bundle_opts.loss_type = core.LossType.Cauchy
-        bundle_opts.loss_scale = 1.0
+        opts = core.RefinerOptions()
+        opts.bundle_opts = core.BundleOptions()
+        opts.bundle_opts.loss_type = core.LossType.Cauchy
+        opts.bundle_opts.loss_scale = 1.0
+        opts.optimize_focal_length = optimize_focal_length
+        opts.optimize_principal_point = optimize_principal_point
+        # TODO: Expose the rest of the options to the GUI
 
         return core.RefinerThread(
             database_path=database_path,
             camera_trajectory=camera_traj,
             model_matrix=typing.cast(np.ndarray, model_matrix),
-            mesh=accel_mesh,
-            optimize_focal_length=optimize_focal_length,
-            optimize_principal_point=optimize_principal_point,
-            bundle_opts=bundle_opts,
+            accel_mesh=accel_mesh,
+            opts=opts,
         )
 
     def _apply_camera_traj(
@@ -512,7 +514,7 @@ class PC_OT_RefineSequence(bpy.types.Operator):
                 return self._cleanup(
                     context, success=False, message=message.what())
 
-            assert isinstance(message, core.RefineTrajectoryUpdate)
+            assert isinstance(message, core.RefinerUpdate)
 
             # Calculate overall progress across all segments
             segment_progress = message.progress
