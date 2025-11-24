@@ -17,7 +17,6 @@ from .operators.keyframe_management import (
 from .operators.open_clip import PC_OT_OpenClip
 from .operators.autodetect_pins import PC_OT_AutodetectPins
 from .operators.pin_distance import (PC_OT_SetPinDistance, PC_OT_SnapPinToDistance)
-from .operators.pin_distance import (PC_OT_SetPinDistance, PC_OT_SnapPinToDistance)
 from .operators.pin_mode import (PC_OT_ClearPins, PC_OT_PinMode)
 from .operators.refiner import PC_OT_CancelRefining, PC_OT_RefineSequence
 from .operators.refresh_geometry import PC_OT_RefreshGeometry
