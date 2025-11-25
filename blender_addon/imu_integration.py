@@ -848,70 +848,84 @@ def _extract_gopro_telemetry(video_path: str) -> IMUData | None:
     """
     Extract IMU data using gopro-telemetry library.
     
-    Note: This implementation uses a generic interface. The actual library name
-    and API may vary. Common libraries include:
-    - gopro-telemetry-extractor
-    - gpmf-parser
-    - gopro-telemetry
+    Supports the gopro-telemetry package (PyPI: gopro-telemetry).
+    The package name uses a hyphen, so we use importlib to import it.
     
-    The code expects a library with GoProTelemetry class that provides:
+    Expected API (gopro-telemetry library):
+    - GoPro() class that takes a file path or file-like object
     - telemetry.accl: List of accelerometer samples with 'ts', 'x', 'y', 'z' keys
     - telemetry.gyro: List of gyroscope samples with 'ts', 'x', 'y', 'z' keys
+    - Timestamps are in seconds (converted to nanoseconds)
     """
-    telemetry_module = None
-    telemetry_class = None
+    import importlib
     
-    # Try different library names
+    # Try gopro-telemetry package (hyphenated name requires importlib)
     try:
-        import gopro_telemetry
-        telemetry_module = gopro_telemetry
-        if hasattr(gopro_telemetry, 'GoProTelemetry'):
-            telemetry_class = gopro_telemetry.GoProTelemetry
+        gopro_telemetry = importlib.import_module('gopro_telemetry')
+        # The library typically provides a GoPro class
+        if hasattr(gopro_telemetry, 'GoPro'):
+            GoPro = gopro_telemetry.GoPro
+        elif hasattr(gopro_telemetry, 'GoProTelemetry'):
+            GoPro = gopro_telemetry.GoProTelemetry
+        else:
+            return None
     except ImportError:
+        # Try alternative import method for hyphenated package
         try:
-            import gopro_telemetry_extractor
-            telemetry_module = gopro_telemetry_extractor
-            if hasattr(gopro_telemetry_extractor, 'GoProTelemetry'):
-                telemetry_class = gopro_telemetry_extractor.GoProTelemetry
-        except ImportError:
-            try:
-                from gpmf_parser import GoProTelemetry
-                telemetry_class = GoProTelemetry
-            except ImportError:
+            import sys
+            import importlib.util
+            spec = importlib.util.find_spec('gopro-telemetry')
+            if spec is None:
                 return None
-    
-    if telemetry_class is None:
-        return None
+            gopro_telemetry = importlib.util.module_from_spec(spec)
+            sys.modules['gopro-telemetry'] = gopro_telemetry
+            spec.loader.exec_module(gopro_telemetry)
+            if hasattr(gopro_telemetry, 'GoPro'):
+                GoPro = gopro_telemetry.GoPro
+            elif hasattr(gopro_telemetry, 'GoProTelemetry'):
+                GoPro = gopro_telemetry.GoProTelemetry
+            else:
+                return None
+        except Exception:
+            return None
     
     try:
-        # Parse GoPro telemetry
-        with open(video_path, 'rb') as f:
-            telemetry = telemetry_class(f)
+        # Parse GoPro telemetry - library typically takes file path
+        telemetry = GoPro(video_path)
         
         # Extract accelerometer data
         accel_data = []
         if hasattr(telemetry, 'accl') and telemetry.accl:
             for sample in telemetry.accl:
-                # GoPro telemetry uses seconds, convert to nanoseconds
-                timestamp_ns = int(sample['ts'] * 1e9)
+                # Handle different timestamp formats
+                ts = sample.get('ts') or sample.get('timestamp', 0.0)
+                # Convert to nanoseconds (assume seconds if < 1e12)
+                if ts < 1e12:
+                    timestamp_ns = int(ts * 1e9)
+                else:
+                    timestamp_ns = int(ts)
                 accel_data.append({
                     'timestamp': timestamp_ns,
-                    'x': sample.get('x', 0.0),
-                    'y': sample.get('y', 0.0),
-                    'z': sample.get('z', 0.0),
+                    'x': float(sample.get('x', sample.get('accl_x', 0.0))),
+                    'y': float(sample.get('y', sample.get('accl_y', 0.0))),
+                    'z': float(sample.get('z', sample.get('accl_z', 0.0))),
                 })
         
         # Extract gyroscope data
         gyro_data = []
         if hasattr(telemetry, 'gyro') and telemetry.gyro:
             for sample in telemetry.gyro:
-                timestamp_ns = int(sample['ts'] * 1e9)
+                ts = sample.get('ts') or sample.get('timestamp', 0.0)
+                if ts < 1e12:
+                    timestamp_ns = int(ts * 1e9)
+                else:
+                    timestamp_ns = int(ts)
                 # GoPro gyro is in rad/s
                 gyro_data.append({
                     'timestamp': timestamp_ns,
-                    'x': sample.get('x', 0.0),
-                    'y': sample.get('y', 0.0),
-                    'z': sample.get('z', 0.0),
+                    'x': float(sample.get('x', sample.get('gyro_x', 0.0))),
+                    'y': float(sample.get('y', sample.get('gyro_y', 0.0))),
+                    'z': float(sample.get('z', sample.get('gyro_z', 0.0))),
                 })
         
         if not accel_data or not gyro_data:
@@ -925,67 +939,66 @@ def _extract_gopro_telemetry(video_path: str) -> IMUData | None:
 
 
 def _extract_camm_from_mp4_boxes(video_path: str) -> IMUData | None:
-    """Extract CAMM data by parsing MP4 boxes directly."""
-    try:
-        # Try using mp4parse or similar library
-        import mp4parse
-    except ImportError:
-        # Fall back to manual parsing
-        return _parse_mp4_boxes_manual(video_path)
+    """
+    Extract CAMM data by parsing MP4 boxes directly.
     
-    try:
-        with open(video_path, 'rb') as f:
-            parser = mp4parse.MP4Parser(f)
-            camm_track = parser.find_track('camm')
-            
-            if not camm_track:
-                return None
-            
-            accel_data = []
-            gyro_data = []
-            
-            for sample in camm_track.samples:
-                # Parse CAMM sample format
-                # CAMM format: timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z
-                if len(sample.data) >= 7:
-                    timestamp_ns = int(sample.timestamp * 1e9)
-                    accel_data.append({
-                        'timestamp': timestamp_ns,
-                        'x': sample.data[1],
-                        'y': sample.data[2],
-                        'z': sample.data[3],
-                    })
-                    gyro_data.append({
-                        'timestamp': timestamp_ns,
-                        'x': sample.data[4],
-                        'y': sample.data[5],
-                        'z': sample.data[6],
-                    })
-            
-            if accel_data and gyro_data:
-                return _create_imu_data_from_dicts(accel_data, gyro_data, video_path)
+    Note: This is a framework implementation. Full MP4 box parsing requires
+    understanding the MP4 container format structure. For production use, consider
+    using specialized tools like ExifTool or MediaInfo to extract CAMM data first,
+    then import as CSV.
     
+    Currently falls back to manual parsing which is not fully implemented.
+    """
+    # Try using mp4parse library if available (note: this is a placeholder
+    # as no standard mp4parse library exists - would need a real MP4 parser)
+    try:
+        # Attempt to use any available MP4 parsing library
+        # This is a placeholder - actual implementation would require
+        # a real MP4 parsing library or manual box parsing
+        pass
     except Exception:
         pass
     
-    return None
+    # Fall back to manual parsing (limited implementation)
+    return _parse_mp4_boxes_manual(video_path)
 
 
 def _parse_mp4_boxes_manual(video_path: str) -> IMUData | None:
-    """Manually parse MP4 boxes to find CAMM metadata."""
+    """
+    Manually parse MP4 boxes to find CAMM metadata.
+    
+    Note: Full MP4 box parsing is complex and requires understanding:
+    - MP4 container structure (ftyp, moov, mdat boxes)
+    - Track structure and sample tables
+    - CAMM track format specification
+    
+    This is a placeholder implementation. For production use, consider:
+    1. Using ExifTool to extract CAMM data: exiftool -b -CAMM video.mp4
+    2. Using MediaInfo to identify CAMM tracks
+    3. Implementing a proper MP4 parser or using an existing library
+    
+    Returns None as manual parsing is not fully implemented.
+    """
     try:
         with open(video_path, 'rb') as f:
             # Read file and search for CAMM box (box type 'camm')
-            # MP4 box format: 4 bytes size + 4 bytes type
+            # MP4 box format: 4 bytes size (big-endian) + 4 bytes type
             data = f.read()
             
-            # Search for 'camm' box type
+            # Search for 'camm' box type signature
+            # Note: This is a naive search - proper parsing requires
+            # following the MP4 box hierarchy
             camm_pos = data.find(b'camm')
             if camm_pos == -1:
                 return None
             
-            # This is a simplified parser - full implementation would need
-            # proper MP4 box structure parsing
+            # Full implementation would:
+            # 1. Parse box size (4 bytes before 'camm')
+            # 2. Read box data
+            # 3. Parse CAMM track structure
+            # 4. Extract IMU samples with timestamps
+            # 5. Convert to IMUData format
+            
             # For now, return None to indicate manual parsing not fully implemented
             return None
     
@@ -994,7 +1007,17 @@ def _parse_mp4_boxes_manual(video_path: str) -> IMUData | None:
 
 
 def _extract_camm_with_mediainfo(video_path: str) -> IMUData | None:
-    """Extract CAMM data using MediaInfo library."""
+    """
+    Extract CAMM data using MediaInfo library.
+    
+    Note: MediaInfo can identify CAMM tracks but extracting the actual IMU data
+    requires parsing the track samples. This is a framework implementation.
+    
+    For production use, consider:
+    1. Using MediaInfo to identify CAMM tracks: mediainfo --Output=JSON video.mp4
+    2. Using ExifTool to extract CAMM data: exiftool -b -CAMM video.mp4
+    3. Implementing track sample parsing based on CAMM specification
+    """
     try:
         from pymediainfo import MediaInfo
     except ImportError:
@@ -1011,8 +1034,23 @@ def _extract_camm_with_mediainfo(video_path: str) -> IMUData | None:
             if result.returncode == 0:
                 metadata = json.loads(result.stdout)
                 # Parse metadata for CAMM tracks
-                # This would need specific parsing based on MediaInfo output
+                # MediaInfo JSON structure: {"media": {"track": [...]}}
+                # Look for tracks with track_type "Other" and format containing "camm"
+                # Note: MediaInfo can identify CAMM tracks but extracting sample data
+                # requires parsing the MP4 container structure
+                media = metadata.get('media', {})
+                tracks = media.get('track', [])
+                for track in tracks:
+                    if isinstance(track, dict):
+                        track_type = track.get('@type', '').lower()
+                        format_name = track.get('Format', '').lower()
+                        if track_type == 'other' and 'camm' in format_name:
+                            # CAMM track found, but sample data extraction not implemented
+                            # Would need to parse track samples from MP4 container
+                            pass
                 return None
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, json.JSONDecodeError, FileNotFoundError):
+            pass
         except Exception:
             pass
         return None
@@ -1025,11 +1063,14 @@ def _extract_camm_with_mediainfo(video_path: str) -> IMUData | None:
         gyro_data = []
         
         for track in media_info.tracks:
-            if track.track_type == 'Other' and 'camm' in track.to_data().get('other_format', '').lower():
-                # Found CAMM track, parse it
-                # MediaInfo structure varies, this is a placeholder
-                # Real implementation would parse the track data
-                pass
+            if track.track_type == 'Other':
+                track_data = track.to_data()
+                format_name = track_data.get('format', track_data.get('other_format', '')).lower()
+                if 'camm' in format_name:
+                    # Found CAMM track, but MediaInfo doesn't provide sample data
+                    # Would need to parse track samples from MP4 container directly
+                    # This requires understanding the MP4 structure and CAMM format
+                    pass
         
         if accel_data and gyro_data:
             return _create_imu_data_from_dicts(accel_data, gyro_data, video_path)

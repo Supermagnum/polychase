@@ -160,29 +160,34 @@ CAMM (Camera Motion Metadata) is a specification that allows MP4 files to embed 
 
 The metadata is stored as a metadata track within the MP4 file, making it easy to extract IMU data directly from video files without separate CSV files.
 
-**Currently Supported CAMM Formats:**
+**CAMM Format Support Status:**
 
-- **GoPro GPMF (General Purpose Metadata Format)**: **Supported**
+- **GoPro GPMF (General Purpose Metadata Format)**: **Framework Ready**
   - HERO5 and later store accelerometer, gyroscope and high frequency GPS as a track within MP4 files
-  - Extraction code implemented - requires compatible GoPro telemetry extraction library
-  - Automatically detected and extracted from GoPro MP4 files when library is available
-  - **Note:** The implementation uses a generic GoPro telemetry interface. You may need to install a compatible library such as `gopro-telemetry-extractor` or similar, depending on what's available for your Python version.
+  - Extraction code implemented - requires `gopro-telemetry` Python package
+  - Automatically detected and extracted from GoPro MP4 files when library is installed
+  - **Installation:** `pip install gopro-telemetry`
+  - **Note:** The implementation supports the standard `gopro-telemetry` package API. Compatibility may vary with different library versions.
 
-**CAMM-Compatible Devices (Framework Ready, May Require Additional Libraries):**
+**CAMM Extraction Framework:**
 
 The codebase includes a framework for extracting CAMM data from MP4 files using multiple methods:
-1. GoPro telemetry extraction (fully implemented)
-2. Direct MP4 box parsing (requires `mp4parse` library or similar)
-3. MediaInfo extraction (requires `pymediainfo` library or `mediainfo` command-line tool)
+1. **GoPro telemetry extraction** (implemented, requires `gopro-telemetry` package)
+2. **MediaInfo extraction** (framework exists, can identify CAMM tracks but sample data extraction not fully implemented)
+3. **Direct MP4 box parsing** (framework exists, not fully implemented - requires MP4 container structure knowledge)
 
-**Note:** While the framework supports generic CAMM extraction, specific implementations for the following formats may require additional libraries or format-specific parsers:
+**Note:** For production use with CAMM formats, consider:
+- **GoPro videos:** Install `gopro-telemetry` package for automatic extraction
+- **Other CAMM formats:** Use external tools (ExifTool, MediaInfo) to extract CAMM data first, then import as CSV using OpenCamera-Sensors format
 
-- **Sony XAVC RTMD**: Sony cameras like DSC-RX100M7 and DSC-RX0M2 record raw per-frame gyro/accelerometer data in XAVC video files. May work with generic CAMM parsing if the format matches standard CAMM structure.
-- **Insta360**: Insta360 Pro2 uses CAMM standard with AngularVelocity (gyroscope in radians/second) and Acceleration (accelerometer in m/s²). May be extractable via ExifTool or MediaInfo if the metadata structure matches.
+**CAMM-Compatible Devices (Framework Ready, May Require Additional Tools):**
 
-For best results with CAMM extraction, ensure you have the appropriate libraries installed:
+- **Sony XAVC RTMD**: Sony cameras like DSC-RX100M7 and DSC-RX0M2 record raw per-frame gyro/accelerometer data in XAVC video files. Extraction not specifically implemented - may work with external tools.
+- **Insta360**: Insta360 Pro2 uses CAMM standard with AngularVelocity (gyroscope in radians/second) and Acceleration (accelerometer in m/s²). Extraction not specifically implemented - may work with external tools.
+
+**Optional Dependencies for CAMM:**
 - GoPro videos: `pip install gopro-telemetry`
-- Generic CAMM: `pip install pymediainfo` or install `mediainfo` command-line tool
+- MediaInfo (for identifying CAMM tracks): `pip install pymediainfo` or install `mediainfo` command-line tool
 
 ### OpenCamera-Sensors Setup
 

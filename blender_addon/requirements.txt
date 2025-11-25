@@ -5,3 +5,7 @@ opencv-contrib-python>=4.9.0.80
 python-dateutil>=2.8.2
 pytz>=2023.3
 
+# Optional dependencies for CAMM format support
+# gopro-telemetry>=1.2.0  # For GoPro GPMF/CAMM extraction (optional)
+# pymediainfo>=9.0.0  # For MediaInfo-based CAMM detection (optional)
+
