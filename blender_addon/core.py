@@ -29,8 +29,6 @@ def _install_wheel_if_needed():
                 break
     
     if so_file_found:
-        if lib_dir not in sys.path:
-            sys.path.insert(0, lib_dir)
         return
     
     if not os.path.exists(wheels_dir):
@@ -86,16 +84,12 @@ def _install_wheel_if_needed():
                     if f.startswith('polychase_core') and (f.endswith('.so') or f.endswith('.pyd')):
                         so_extracted = True
                         # If .so is in a subdirectory, we need to add that to path
-                        if root != lib_dir:
-                            if root not in sys.path:
-                                sys.path.insert(0, root)
+                        # We'll load the module explicitly later via importlib
                         break
                 if so_extracted:
                     break
         
-        # Always add lib directory to Python path
-        if lib_dir not in sys.path:
-            sys.path.insert(0, lib_dir)
+        # When the .so exists we rely on explicit importlib loading later
     except Exception as e:
         # Log the error for debugging but continue to try other import methods
         import traceback
@@ -155,10 +149,6 @@ else:
         lib_dir = os.path.join(addon_path, 'lib')
         
         if os.path.exists(lib_dir):
-            # Ensure lib_dir is in sys.path
-            if lib_dir not in sys.path:
-                sys.path.insert(0, lib_dir)
-            
             # Find the .so file and try to load it directly
             so_file = None
             for root, dirs, files in os.walk(lib_dir):

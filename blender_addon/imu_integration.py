@@ -224,28 +224,73 @@ def _try_import_package(package_name: str, module_name: str = None) -> tuple[boo
     return False, None, error_msg
 
 
+def _ensure_pandas_runtime_dependencies() -> tuple[list[str], list[str]]:
+    """
+    Make sure pandas runtime dependencies (python-dateutil and pytz) are importable.
+    
+    Returns:
+        (missing_dependencies, diagnostic_messages)
+    """
+    missing: list[str] = []
+    diagnostics: list[str] = []
+    dependency_specs = [
+        ('dateutil', 'dateutil', 'python-dateutil'),
+        ('pytz', 'pytz', 'pytz'),
+    ]
+    
+    for package_name, module_name, display_name in dependency_specs:
+        success, version, error = _try_import_package(package_name, module_name)
+        if not success:
+            missing.append(display_name)
+            if error:
+                diagnostics.append(f"{display_name}: {error}")
+    
+    return missing, diagnostics
+
+
 def _detect_features():
     """Automatically detect and import optional dependencies."""
     global _pandas_available, _pandas_version, _pandas_import_error, pd
     global _scipy_available, _scipy_version, _scipy_import_error
     
-    # Detect pandas
-    success, version, error = _try_import_package('pandas', 'pandas')
-    if success:
-        try:
-            import pandas as pd
-            _pandas_available = True
-            _pandas_version = pd.__version__ if pd is not None else version
-            _pandas_import_error = None
-        except Exception as e:
-            _pandas_available = False
-            _pandas_version = None
-            _pandas_import_error = str(e)
-            pd = None
-    else:
+    missing_runtime_deps, runtime_diagnostics = _ensure_pandas_runtime_dependencies()
+    if missing_runtime_deps:
         _pandas_available = False
         _pandas_version = None
-        _pandas_import_error = error
+        pd = None
+        diagnostic_block = "\n".join(runtime_diagnostics) if runtime_diagnostics else ""
+        instructions = (
+            "Install python-dateutil>=2.8.2 and pytz>=2023.3 in the same Python "
+            "environment as Blender. The addon will re-check automatically when "
+            "reloaded or when refresh_feature_detection() is called."
+        )
+        _pandas_import_error = (
+            "Missing pandas runtime dependencies: "
+            f"{', '.join(missing_runtime_deps)}\n"
+            f"{diagnostic_block}\n"
+            f"{instructions}"
+        ).strip()
+    else:
+        # Detect pandas
+        success, version, error = _try_import_package('pandas', 'pandas')
+        if success:
+            try:
+                import pandas as pd
+                _pandas_available = True
+                _pandas_version = pd.__version__ if pd is not None else version
+                _pandas_import_error = None
+            except Exception as e:
+                _pandas_available = False
+                _pandas_version = None
+                _pandas_import_error = str(e)
+                pd = None
+        else:
+            _pandas_available = False
+            _pandas_version = None
+            _pandas_import_error = error
+            pd = None
+
+    if not _pandas_available:
         pd = None
     
     # Detect scipy (update SCIPY_AVAILABLE)
@@ -687,7 +732,8 @@ def load_opencamera_csv(accel_path: str, gyro_path: str,
     if pd is None:
         import_error_msg = _pandas_import_error if '_pandas_import_error' in globals() else 'Module not found'
         error_msg = (
-            "pandas is required for CSV loading but is not installed.\n"
+            "pandas (and its dependencies python-dateutil / pytz) are required for CSV loading "
+            "but are not available.\n"
             f"Import error: {import_error_msg}\n\n"
             "Installation options:\n"
             "1. Blender 4.2+: Should install automatically via blender_manifest.toml\n"
@@ -695,9 +741,12 @@ def load_opencamera_csv(accel_path: str, gyro_path: str,
             "   - Try disabling and re-enabling the addon to trigger dependency installation\n"
             "2. Manual installation (Blender's Python console):\n"
             "   import subprocess, sys\n"
-            "   subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pandas>=1.5.0'])\n"
+            "   subprocess.check_call([\n"
+            "       sys.executable, '-m', 'pip', 'install',\n"
+            "       'pandas>=1.5.0', 'python-dateutil>=2.8.2', 'pytz>=2023.3'\n"
+            "   ])\n"
             "3. System-wide (if Blender uses system Python):\n"
-            "   pip install pandas>=1.5.0"
+            "   pip install pandas>=1.5.0 python-dateutil>=2.8.2 pytz>=2023.3"
         )
         raise ImportError(error_msg)
     

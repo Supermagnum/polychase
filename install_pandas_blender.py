@@ -21,6 +21,8 @@ def install_dependencies():
     
     dependencies = [
         "pandas>=1.5.0",
+        "python-dateutil>=2.8.2",
+        "pytz>=2023.3",
         "scipy>=1.9.0",
         "numpy>=1.21.0"
     ]
@@ -54,7 +56,7 @@ def install_dependencies():
     print("Verifying installation...")
     print("="*60)
     
-    for module_name in ['pandas', 'scipy', 'numpy']:
+    for module_name in ['pandas', 'dateutil', 'pytz', 'scipy', 'numpy']:
         try:
             mod = __import__(module_name)
             print(f"✓ {module_name}: {mod.__version__}")

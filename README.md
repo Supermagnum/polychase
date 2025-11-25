@@ -251,9 +251,11 @@ The IMU Settings panel displays quality indicators:
 - `numpy`: For numerical operations
 - `scipy`: For signal processing and filtering
 
-**Optional (but recommended):**
+- **Optional (but recommended):**
 - `pandas`: For CSV file parsing (required for OpenCamera-Sensors CSV format)
-- `opencv-python`: For automatic feature detection using Good Features to Track (GFTT) algorithm
+- `python-dateutil`: Required by pandas for timestamp parsing
+- `pytz`: Required by pandas for timezone handling
+- `opencv-contrib-python`: For automatic feature detection using Good Features to Track (GFTT) algorithm
 - `gopro-telemetry`: For GoPro GPMF/CAMM extraction from GoPro videos
 - `pymediainfo`: For generic CAMM extraction via MediaInfo (alternative: install `mediainfo` command-line tool)
 
@@ -263,10 +265,10 @@ Install dependencies with:
 pip install numpy scipy
 
 # For CSV support (OpenCamera-Sensors)
-pip install pandas
+pip install pandas python-dateutil pytz
 
 # For automatic feature detection
-pip install opencv-python
+pip install opencv-contrib-python
 
 # For GoPro CAMM support
 pip install gopro-telemetry
@@ -275,6 +277,8 @@ pip install gopro-telemetry
 pip install pymediainfo
 # OR install mediainfo command-line tool via system package manager
 ```
+
+**Note:** If you're installing dependencies in Blender's Python environment, see [MANUAL_DEPENDENCY_INSTALLATION.md](MANUAL_DEPENDENCY_INSTALLATION.md) for detailed instructions.
 
 ## Development and Testing
 

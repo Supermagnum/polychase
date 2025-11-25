@@ -3,6 +3,7 @@
 
 import typing
 import math
+import os
 
 import bpy
 import bpy.types
@@ -19,6 +20,79 @@ except ImportError:
     CV2_AVAILABLE = False
 
 
+def _scene_frame_to_clip_frame(clip: bpy.types.MovieClip, scene_frame: int) -> int:
+    """Convert a scene frame index to the clip-local frame index (1-based)."""
+    clip_start = int(getattr(clip, "frame_start", 1))
+    frame_offset = int(getattr(clip, "frame_offset", 0))
+    return frame_offset + (scene_frame - clip_start) + 1
+
+
+def _clip_frame_bounds(clip: bpy.types.MovieClip) -> tuple[int, int]:
+    """Return inclusive clip frame bounds in clip-local indices (1-based)."""
+    frame_offset = int(getattr(clip, "frame_offset", 0))
+    duration = max(int(getattr(clip, "frame_duration", 0)), 0)
+    first = frame_offset + 1
+    last = frame_offset + duration if duration > 0 else frame_offset + 1
+    return first, last
+
+
+def _resolve_clip_frame_path(clip: bpy.types.MovieClip, frame_number: int) -> str | None:
+    """Return absolute path to the cached frame image if Blender generated one."""
+    frame_path_attr = getattr(clip, "frame_path", None)
+    path: str | None = None
+
+    if callable(frame_path_attr):
+        try:
+            path = frame_path_attr(frame_number)
+        except TypeError:
+            try:
+                path = frame_path_attr()
+            except TypeError:
+                path = None
+    elif isinstance(frame_path_attr, str):
+        path = frame_path_attr
+
+    if not path:
+        return None
+
+    abs_path = bpy.path.abspath(path)
+    return abs_path
+
+
+def _decode_movie_frame_with_opencv(clip: bpy.types.MovieClip,
+                                    frame_number: int) -> np.ndarray | None:
+    """Decode a frame directly from the movie file using OpenCV."""
+    clip_filepath = getattr(clip, "filepath", "")
+    if not clip_filepath:
+        return None
+
+    abs_clip_path = bpy.path.abspath(clip_filepath)
+    if not abs_clip_path or not os.path.exists(abs_clip_path):
+        return None
+
+    try:
+        capture = cv2.VideoCapture(abs_clip_path)
+    except Exception:
+        return None
+
+    if not capture or not capture.isOpened():
+        if capture:
+            capture.release()
+        return None
+
+    try:
+        target_index = max(frame_number - 1, 0)
+        capture.set(cv2.CAP_PROP_POS_FRAMES, float(target_index))
+        success, frame = capture.read()
+    finally:
+        capture.release()
+
+    if not success or frame is None:
+        return None
+
+    return frame
+
+
 def detect_features_opencv(clip: bpy.types.MovieClip, frame_number: int,
                            max_features: int = 100,
                            quality_level: float = 0.01,
@@ -28,7 +102,7 @@ def detect_features_opencv(clip: bpy.types.MovieClip, frame_number: int,
 
     Args:
         clip: Blender movie clip
-        frame_number: Frame number to detect features in
+        frame_number: Clip-local frame number (1-based)
         max_features: Maximum number of features to detect
         quality_level: Quality threshold (0-1, lower = more features)
         min_distance: Minimum distance between features (pixels)
@@ -42,19 +116,21 @@ def detect_features_opencv(clip: bpy.types.MovieClip, frame_number: int,
     # Get clip dimensions
     width, height = clip.size
 
-    # Load frame as image
-    clip.frame_set(frame_number)
-    frame_path = clip.frame_path
-
-    # Read image using OpenCV
-    # frame_path is relative, need to make it absolute
-    import os
-    abs_frame_path = bpy.path.abspath(frame_path)
-
-    if not os.path.exists(abs_frame_path):
+    # Validate frame range (defensive)
+    clip_first, clip_last = _clip_frame_bounds(clip)
+    if frame_number < clip_first or frame_number > clip_last:
         return []
 
-    img = cv2.imread(abs_frame_path)
+    # Load frame as image (prefer cached frame, fallback to decoding source video)
+    abs_frame_path = _resolve_clip_frame_path(clip, frame_number)
+
+    img = None
+    if abs_frame_path and os.path.exists(abs_frame_path):
+        img = cv2.imread(abs_frame_path)
+
+    if img is None and getattr(clip, "source", "MOVIE") == "MOVIE":
+        img = _decode_movie_frame_with_opencv(clip, frame_number)
+
     if img is None:
         return []
 
@@ -92,11 +168,15 @@ def detect_features_blender_tracking(clip: bpy.types.MovieClip,
 
     Args:
         clip: Blender movie clip
-        frame_number: Frame number to detect features in
+        frame_number: Clip-local frame number (1-based)
 
     Returns:
         List of (x, y) feature coordinates in normalized clip coordinates [0, 1]
     """
+    clip_first, clip_last = _clip_frame_bounds(clip)
+    if frame_number < clip_first or frame_number > clip_last:
+        return []
+
     if not clip.tracking:
         return []
 
@@ -219,13 +299,29 @@ class PC_OT_AutodetectPins(bpy.types.Operator):
         # Get current frame
         current_frame = context.scene.frame_current
 
-        # Check if frame is within clip range
-        clip_start = clip.frame_start
-        clip_end = clip.frame_start + clip.frame_duration - 1
-        if current_frame < clip_start or current_frame > clip_end:
+        # Check if frame is within clip range (scene timeline)
+        clip_scene_start = int(getattr(clip, "frame_start", 1))
+        clip_scene_end = clip_scene_start + max(int(getattr(clip, "frame_duration", 0)) - 1, 0)
+        if current_frame < clip_scene_start or current_frame > clip_scene_end:
             self.report(
                 {"ERROR"},
-                f"Current frame {current_frame} is outside clip range [{clip_start}, {clip_end}]"
+                (
+                    f"Current frame {current_frame} is outside clip range "
+                    f"[{clip_scene_start}, {clip_scene_end}]"
+                )
+            )
+            return {"CANCELLED"}
+
+        # Convert to clip-local frame index and validate against actual video frames
+        clip_frame_number = _scene_frame_to_clip_frame(clip, current_frame)
+        clip_frame_start, clip_frame_end = _clip_frame_bounds(clip)
+        if clip_frame_number < clip_frame_start or clip_frame_number > clip_frame_end:
+            self.report(
+                {"ERROR"},
+                (
+                    f"Current frame {current_frame} maps to clip frame {clip_frame_number}, "
+                    f"but valid clip frames are [{clip_frame_start}, {clip_frame_end}]"
+                )
             )
             return {"CANCELLED"}
 
@@ -252,7 +348,7 @@ class PC_OT_AutodetectPins(bpy.types.Operator):
 
         features = []
         if tracker.autodetect_use_blender_tracking:
-            features = detect_features_blender_tracking(clip, current_frame)
+            features = detect_features_blender_tracking(clip, clip_frame_number)
 
         if not features or tracker.autodetect_use_opencv:
             if not CV2_AVAILABLE:
@@ -263,7 +359,7 @@ class PC_OT_AutodetectPins(bpy.types.Operator):
             else:
                 opencv_features = detect_features_opencv(
                     clip,
-                    current_frame,
+                    clip_frame_number,
                     max_features=tracker.autodetect_max_pins,
                     quality_level=tracker.autodetect_quality_threshold,
                     min_distance=tracker.autodetect_min_distance
