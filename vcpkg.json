@@ -9,7 +9,7 @@
             ]
         },
         {
-            "name": "embree4",
+            "name": "embree",
             "default-features": false,
             "features": [
                 "geometry-triangle",

@@ -620,11 +620,14 @@ class Tracker:
         else:
             # Check if masked_triangles buffer is valid
             if tracker.masked_triangles and len(tracker.masked_triangles) > 0:
-                buffer_size = len(tracker.masked_triangles)
-                element_size = np.dtype(np.uint32).itemsize
-                if buffer_size % element_size == 0:
+                # Blender v5.0.0 introduced a bug where BYTE_STRING properties insert
+                # an extra null terminator.
+                # See: https://projects.blender.org/blender/blender/issues/150431
+                length = len(
+                    tracker.masked_triangles) - len(tracker.masked_triangles) % 4
+                if length > 0:
                     masked_triangles = np.frombuffer(
-                        tracker.masked_triangles, dtype=np.uint32)
+                        tracker.masked_triangles[:length], dtype=np.uint32)
                 else:
                     # Invalid buffer size, create empty array
                     masked_triangles = np.empty((0,), dtype=np.uint32)

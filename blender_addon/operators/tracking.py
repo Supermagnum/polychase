@@ -199,37 +199,54 @@ class PC_OT_TrackSequence(bpy.types.Operator):
         assert tracker.geometry
         assert tracker_core
 
+        # NOTE:
+        # The C++ tracker always estimates the camera trajectory. However, the same
+        # apparent motion can be represented either by moving the camera or by
+        # moving the model (or any combination of the two).
+        #
+        # To keep things consistent, we:
+        #   1. Combine them into MV = view @ model (the effective camera pose)
+        #   2. Decompose MV
+        #   3. Pass the scale part as a constant model_matrix, and loc/rot as a
+        #      scale-free view_matrix that changes across frames.
+        #
+        # After tracking, we recompose the results back into model/view components
+        # depending on what is being tracked.
+        #
+        # TODO: This code is duplicated in the refiner. Refactor this into a shared
+        # utility that constructs a CameraTrajectory and use TrackTrajectory instead
+        # of TrackSequence, matching RefineTrajectory’s API.
+
         model_matrix = tracker.geometry.matrix_world
         view_matrix = utils.get_camera_view_matrix(camera)
-
-        scale_matrix = mathutils.Matrix.Diagonal(
-            model_matrix.to_scale().to_4d())
         model_view_matrix = view_matrix @ model_matrix
 
-        loc, rot, _ = model_view_matrix.decompose()
+        loc, rot, scale = model_view_matrix.decompose()
+        scale_mat = mathutils.Matrix.Diagonal(scale.to_4d())
         model_view_matrix_no_scale = mathutils.Matrix.LocRotScale(
             loc, rot, None)
 
         accel_mesh = tracker_core.accel_mesh
 
-        bundle_opts = core.BundleOptions()
-        bundle_opts.loss_type = core.LossType.Cauchy
-        bundle_opts.loss_scale = 1.0
+        opts = core.TrackerOptions()
+        opts.frame_from = frame_from
+        opts.frame_to_inclusive = frame_to_inclusive
+        opts.pnp_opts.optimize_focal_length = tracker.variable_focal_length
+        opts.pnp_opts.optimize_principal_point = tracker.variable_principal_point
+        # TODO: Expose these options to the GUI
+        opts.pnp_opts.bundle_opts.loss_type = core.LossType.Cauchy
+        opts.pnp_opts.bundle_opts.loss_scale = 1.0
 
         return core.TrackerThread(
             database_path=database_path,
-            frame_from=frame_from,
-            frame_to_inclusive=frame_to_inclusive,
             scene_transform=core.SceneTransformations(
-                model_matrix=typing.cast(core.np.ndarray, scale_matrix),
+                model_matrix=typing.cast(core.np.ndarray, scale_mat),
                 view_matrix=typing.cast(
                     core.np.ndarray, model_view_matrix_no_scale),
                 intrinsics=core.camera_intrinsics(camera, width, height),
             ),
             accel_mesh=accel_mesh,
-            bundle_opts=bundle_opts,
-            optimize_focal_length=tracker.variable_focal_length,
-            optimize_principal_point=tracker.variable_principal_point,
+            opts=opts,
         )
 
     def modal(
@@ -284,14 +301,14 @@ class PC_OT_TrackSequence(bpy.types.Operator):
                 return self._cleanup(
                     context, success=False, message=message.what())
 
-            assert isinstance(message, core.FrameTrackingResult)
+            assert isinstance(message, core.TrackerUpdate)
 
             num_frames = abs(self._frame_to_inclusive - self._frame_from) + 1
             frame_id = message.frame
             frames_processed = abs(frame_id - self._frame_from) + 1
 
-            if message.inlier_ratio < 0.25:
-                error_message = f"Error: Could not predict pose at frame #{frame_id} from optical flow data due to low inlier ratio ({message.inlier_ratio*100:.02f}%)"
+            if message.pnp_result.inlier_ratio < 0.25:
+                error_message = f"Error: Could not predict pose at frame #{frame_id} from optical flow data due to low inlier ratio ({message.pnp_result.inlier_ratio*100:.02f}%)"
                 return self._cleanup(
                     context, success=False, message=error_message)
 
@@ -302,7 +319,7 @@ class PC_OT_TrackSequence(bpy.types.Operator):
             transient.tracking_message = progress_message
             context.window_manager.progress_update(progress)
 
-            pose = message.pose
+            pose = message.pnp_result.camera.pose
 
             # Apply IMU constraints if enabled
             if self._imu_processor and tracker.imu_enabled:
@@ -357,7 +374,8 @@ class PC_OT_TrackSequence(bpy.types.Operator):
                 )
 
             if tracker.variable_focal_length or tracker.variable_principal_point:
-                core.set_camera_intrinsics(tracker.camera, message.intrinsics)
+                core.set_camera_intrinsics(
+                    tracker.camera, message.pnp_result.camera.intrinsics)
 
                 keyframes.insert_keyframe(
                     obj=tracker.camera.data,

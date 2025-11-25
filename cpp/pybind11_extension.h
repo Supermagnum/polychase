@@ -40,16 +40,16 @@ struct type_caster<std::vector<Eigen::Matrix<Scalar, Size, 1>>> {
         }
         const size_t num_elements = info.shape[0];
         value.resize(num_elements);
-        const auto &mat = src.cast<Eigen::Ref<const MatrixType>>();
-        Eigen::Map<MatrixType>(reinterpret_cast<Scalar *>(value.data()),
+        const auto& mat = src.cast<Eigen::Ref<const MatrixType>>();
+        Eigen::Map<MatrixType>(reinterpret_cast<Scalar*>(value.data()),
                                num_elements, Size) = mat;
         return true;
     }
 
-    static handle cast(const std::vector<VectorType> &vec,
+    static handle cast(const std::vector<VectorType>& vec,
                        return_value_policy /* policy */, handle h) {
         Eigen::Map<const MatrixType> mat(
-            reinterpret_cast<const Scalar *>(vec.data()), vec.size(), Size);
+            reinterpret_cast<const Scalar*>(vec.data()), vec.size(), Size);
         return type_caster<Eigen::Map<const MatrixType>>::cast(
             mat, return_value_policy::copy, h);
     }

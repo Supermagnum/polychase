@@ -14,9 +14,11 @@ struct PnPResult {
 
 struct PnPOptions {
     BundleOptions bundle_opts;
-    Float max_inlier_error;
-    bool optimize_focal_length;
-    bool optimize_principal_point;
+    Float max_inlier_error = 12.0;
+    Float min_fov_deg = 15.0;
+    Float max_fov_deg = 160.0;
+    bool optimize_focal_length = false;
+    bool optimize_principal_point = false;
 };
 
 void SolvePnPIterative(const RefConstRowMajorMatrixX3f& object_points,

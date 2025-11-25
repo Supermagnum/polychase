@@ -10,30 +10,29 @@
 #include "camera_trajectory.h"
 #include "database.h"
 #include "geometry.h"
+#include "pnp/solvers.h"
 #include "ray_casting.h"
 
-struct FrameTrackingResult {
-    int32_t frame;
-    Pose pose;
-    CameraIntrinsics intrinsics;
-    BundleStats bundle_stats;
-    Float inlier_ratio;
+struct TrackerOptions {
+    PnPOptions pnp_opts;
+    int32_t frame_from;
+    int32_t frame_to_inclusive;
 };
 
-using TrackingCallback = std::function<bool(const FrameTrackingResult&)>;
+struct TrackerUpdate {
+    int32_t frame;
+    PnPResult pnp_result;
+};
 
-// TODO: Drop this function, and use CameraTrajectory similar to what we do in
-// the refiner
-void TrackSequence(const std::string& database_path, int32_t frame_from,
-                   int32_t frame_to_inclusive,
+using TrackerCallback = std::function<bool(const TrackerUpdate&)>;
+
+// TODO: Drop this function in favor of TrackTrajectory
+void TrackSequence(const std::string& database_path,
                    const SceneTransformations& scene_transform,
-                   const AcceleratedMesh& accel_mesh, TrackingCallback callback,
-                   bool optimize_focal_length, bool optimize_principal_point,
-                   BundleOptions opts);
+                   const AcceleratedMesh& accel_mesh, TrackerCallback callback,
+                   const TrackerOptions& opts);
 
-void TrackCameraTrajectory(
-    const Database& database, CameraTrajectory& camera_traj, int32_t frame_from,
-    int32_t frame_to_inclusive, const RowMajorMatrix4f& model_matrix,
-    const AcceleratedMesh& accel_mesh, TrackingCallback callback,
-    bool optimize_focal_length, bool optimize_principal_point,
-    const BundleOptions& opts);
+void TrackTrajectory(const Database& database, CameraTrajectory& camera_traj,
+                     const RowMajorMatrix4f& model_matrix,
+                     const AcceleratedMesh& accel_mesh,
+                     TrackerCallback callback, const TrackerOptions& opts);

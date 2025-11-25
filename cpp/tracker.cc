@@ -33,12 +33,13 @@ struct SolveFrameCache {
     }
 };
 
-static std::optional<PnPResult> SolveFrame(
-    const Database& database, const CameraTrajectory& camera_traj,
-    const RowMajorMatrix4f& model_matrix, const int32_t frame_id,
-    const AcceleratedMesh& accel_mesh, bool optimize_focal_length,
-    bool optimize_principal_point, const BundleOptions& bundle_opts,
-    SolveFrameCache& cache) {
+static std::optional<PnPResult> SolveFrame(const Database& database,
+                                           const CameraTrajectory& camera_traj,
+                                           const RowMajorMatrix4f& model_matrix,
+                                           const int32_t frame_id,
+                                           const AcceleratedMesh& accel_mesh,
+                                           const PnPOptions& pnp_opts,
+                                           SolveFrameCache& cache) {
     cache.Clear();
     database.FindOpticalFlowsToImage(frame_id, cache.flow_frames_ids);
 
@@ -118,46 +119,34 @@ static std::optional<PnPResult> SolveFrame(
         result.camera = *camera_traj.Get(frame_id + 1);
     }
 
-    const PnPOptions opts = {
-        .bundle_opts = bundle_opts,
-        .max_inlier_error = 12.0f,  // FIXME: Make this customizable
-        .optimize_focal_length = optimize_focal_length,
-        .optimize_principal_point = optimize_principal_point,
-    };
-
     SolvePnPIterative(object_points_eigen, image_points_eigen, weights_eigen,
-                      opts, result);
+                      pnp_opts, result);
     return result;
 }
 
-void TrackCameraTrajectory(
-    const Database& database, CameraTrajectory& camera_traj, int32_t frame_from,
-    int32_t frame_to_inclusive, const RowMajorMatrix4f& model_matrix,
-    const AcceleratedMesh& accel_mesh, TrackingCallback callback,
-    bool optimize_focal_length, bool optimize_principal_point,
-    const BundleOptions& opts) {
-    SPDLOG_INFO("Tracking from frame #{} to frame #{}", frame_from,
-                frame_to_inclusive);
-
-    const int32_t first_frame = std::min(frame_from, frame_to_inclusive);
-    const int32_t last_frame = std::max(frame_from, frame_to_inclusive);
-    const int32_t dir = (frame_from < frame_to_inclusive) ? 1 : -1;
+void TrackTrajectory(const Database& database, CameraTrajectory& camera_traj,
+                     const RowMajorMatrix4f& model_matrix,
+                     const AcceleratedMesh& accel_mesh,
+                     TrackerCallback callback, const TrackerOptions& opts) {
+    SPDLOG_INFO("Tracking from frame #{} to frame #{}", opts.frame_from,
+                opts.frame_to_inclusive);
 
     // Sanity checks
-    CHECK(camera_traj.IsValidFrame(first_frame));
-    CHECK(camera_traj.IsValidFrame(last_frame));
-    CHECK(camera_traj.IsFrameFilled(frame_from));
+    CHECK(camera_traj.IsFrameFilled(opts.frame_from));
+    CHECK(camera_traj.IsValidFrame(opts.frame_to_inclusive));
 
     // To avoid unnecessary re-alloactions
     SolveFrameCache cache;
 
-    for (int32_t frame_id = frame_from + dir;
-         frame_id != frame_to_inclusive + dir; frame_id += dir) {
+    const int32_t dir = (opts.frame_from < opts.frame_to_inclusive) ? 1 : -1;
+
+    for (int32_t frame_id = opts.frame_from + dir;
+         frame_id != opts.frame_to_inclusive + dir; frame_id += dir) {
         SPDLOG_DEBUG("Tracking frame {}", frame_id);
 
-        const std::optional<PnPResult> maybe_result = SolveFrame(
-            database, camera_traj, model_matrix, frame_id, accel_mesh,
-            optimize_focal_length, optimize_principal_point, opts, cache);
+        const std::optional<PnPResult> maybe_result =
+            SolveFrame(database, camera_traj, model_matrix, frame_id,
+                       accel_mesh, opts.pnp_opts, cache);
 
         if (!maybe_result) {
             throw std::runtime_error(fmt::format(
@@ -168,15 +157,7 @@ void TrackCameraTrajectory(
         const PnPResult& pnp_result = *maybe_result;
 
         if (callback) {
-            const FrameTrackingResult result = {
-                .frame = frame_id,
-                .pose = pnp_result.camera.pose,
-                .intrinsics = pnp_result.camera.intrinsics,
-                .bundle_stats = pnp_result.bundle_stats,
-                .inlier_ratio = pnp_result.inlier_ratio,
-            };
-
-            const bool ok = callback(result);
+            const bool ok = callback({frame_id, pnp_result});
             if (!ok) {
                 SPDLOG_INFO("User requested to stop at frame {}", frame_id);
                 return;
@@ -187,27 +168,26 @@ void TrackCameraTrajectory(
     }
 
     SPDLOG_INFO("Tracking finished successfuly from frame #{} to frame #{}",
-                frame_from, frame_to_inclusive);
+                opts.frame_from, opts.frame_to_inclusive);
     return;
 }
 
-void TrackSequence(const std::string& database_path, int32_t frame_from,
-                   int32_t frame_to_inclusive,
+void TrackSequence(const std::string& database_path,
                    const SceneTransformations& scene_transform,
-                   const AcceleratedMesh& accel_mesh, TrackingCallback callback,
-                   bool optimize_focal_length, bool optimize_principal_point,
-                   BundleOptions bundle_opts) {
+                   const AcceleratedMesh& accel_mesh, TrackerCallback callback,
+                   const TrackerOptions& opts) {
     const Database database{database_path};
 
-    const size_t num_frames = std::abs(frame_to_inclusive - frame_from) + 1;
-    CameraTrajectory camera_traj{std::min(frame_from, frame_to_inclusive),
-                                 num_frames};
-    camera_traj.Set(frame_from,
+    const size_t num_frames =
+        std::abs(opts.frame_to_inclusive - opts.frame_from) + 1;
+
+    CameraTrajectory camera_traj{
+        std::min(opts.frame_from, opts.frame_to_inclusive), num_frames};
+
+    camera_traj.Set(opts.frame_from,
                     CameraState{scene_transform.intrinsics,
                                 Pose::FromRt(scene_transform.view_matrix)});
 
-    TrackCameraTrajectory(database, camera_traj, frame_from, frame_to_inclusive,
-                          scene_transform.model_matrix, accel_mesh, callback,
-                          optimize_focal_length, optimize_principal_point,
-                          bundle_opts);
+    TrackTrajectory(database, camera_traj, scene_transform.model_matrix,
+                    accel_mesh, callback, opts);
 }
