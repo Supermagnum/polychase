@@ -106,55 +106,13 @@ _scipy_version = None
 _scipy_import_error = None
 
 
-def _find_package_locations(package_name: str) -> list[str]:
-    """
-    Search for a package in common installation locations.
-    
-    Returns list of directory paths where the package might be found.
-    """
-    locations = []
-    
-    # Check current sys.path
-    for path in sys.path:
-        package_path = os.path.join(path, package_name)
-        if os.path.exists(package_path):
-            locations.append(path)
-    
-    # Common Flatpak Python paths
-    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-    flatpak_paths = [
-        f'/var/data/python/lib/python{python_version}/site-packages',
-        f'/var/data/python/lib/python3.11/site-packages',
-        f'/var/data/python/lib/python3.12/site-packages',
-        os.path.expanduser(f'~/.local/lib/python{python_version}/site-packages'),
-        os.path.expanduser('~/.local/lib/python3.11/site-packages'),
-        os.path.expanduser('~/.local/lib/python3.12/site-packages'),
-    ]
-    
-    # Check Flatpak paths
-    for path in flatpak_paths:
-        if os.path.exists(path):
-            package_path = os.path.join(path, package_name)
-            if os.path.exists(package_path) and path not in locations:
-                locations.append(path)
-    
-    # Check system-wide locations
-    system_paths = [
-        f'/usr/lib/python{python_version}/site-packages',
-        f'/usr/local/lib/python{python_version}/site-packages',
-    ]
-    for path in system_paths:
-        if os.path.exists(path):
-            package_path = os.path.join(path, package_name)
-            if os.path.exists(package_path) and path not in locations:
-                locations.append(path)
-    
-    return locations
-
-
 def _try_import_package(package_name: str, module_name: str = None) -> tuple[bool, str | None, str | None]:
     """
-    Try multiple strategies to import a package.
+    Try to import a package using standard Python import mechanisms.
+    
+    Note: This function does not manipulate sys.path or sys.modules to comply
+    with Blender's distribution policies. Packages must be installed in the
+    standard Python environment or bundled with the add-on.
     
     Args:
         package_name: Name of the package directory (e.g., 'pandas')
@@ -166,62 +124,14 @@ def _try_import_package(package_name: str, module_name: str = None) -> tuple[boo
     if module_name is None:
         module_name = package_name
     
-    # Strategy 1: Direct import
+    # Direct import only - no sys.path or sys.modules manipulation
     try:
         module = __import__(module_name)
         version = getattr(module, '__version__', None)
         return True, version, None
     except ImportError as e:
         error_msg = str(e)
-    
-    # Strategy 2: Find package locations and add to sys.path
-    locations = _find_package_locations(package_name)
-    added_paths = []
-    
-    for location in locations:
-        if location not in sys.path:
-            sys.path.insert(0, location)
-            added_paths.append(location)
-    
-    # Try importing again after adding paths
-    if added_paths:
-        try:
-            module = __import__(module_name)
-            version = getattr(module, '__version__', None)
-            return True, version, None
-        except ImportError as e2:
-            error_msg = str(e2)
-    
-    # Strategy 3: Try importlib.util for direct module loading
-    for location in locations:
-        package_path = os.path.join(location, package_name)
-        if os.path.exists(package_path):
-            init_file = os.path.join(package_path, '__init__.py')
-            if os.path.exists(init_file):
-                try:
-                    spec = importlib.util.spec_from_file_location(
-                        module_name, init_file
-                    )
-                    if spec and spec.loader:
-                        module = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(module)
-                        version = getattr(module, '__version__', None)
-                        # Register in sys.modules
-                        sys.modules[module_name] = module
-                        return True, version, None
-                except Exception:
-                    pass
-    
-    # Build comprehensive error message
-    if locations:
-        error_msg = (
-            f"{error_msg}\n"
-            f"Package '{package_name}' appears to be installed in: {locations}\n"
-            f"Added paths to sys.path: {added_paths}\n"
-            f"This may require restarting Blender or reloading the addon."
-        )
-    
-    return False, None, error_msg
+        return False, None, error_msg
 
 
 def _ensure_pandas_runtime_dependencies() -> tuple[list[str], list[str]]:
@@ -872,13 +782,11 @@ def _extract_gopro_telemetry(video_path: str) -> IMUData | None:
     except ImportError:
         # Try alternative import method for hyphenated package
         try:
-            import sys
             import importlib.util
             spec = importlib.util.find_spec('gopro-telemetry')
-            if spec is None:
+            if spec is None or spec.loader is None:
                 return None
             gopro_telemetry = importlib.util.module_from_spec(spec)
-            sys.modules['gopro-telemetry'] = gopro_telemetry
             spec.loader.exec_module(gopro_telemetry)
             if hasattr(gopro_telemetry, 'GoPro'):
                 GoPro = gopro_telemetry.GoPro

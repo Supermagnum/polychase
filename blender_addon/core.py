@@ -10,15 +10,32 @@ import numpy as np
 from . import properties, utils
 
 def _install_wheel_if_needed():
-    """Extract and install wheel for Blender versions < 4.2 that don't support blender_manifest.toml"""
+    """
+    Extract and install wheel for Blender versions < 4.2 that don't support blender_manifest.toml.
+    
+    Note: For Blender 4.2+, wheels are automatically installed by Blender's dependency system.
+    This function uses extension_path_user() to comply with read-only filesystem requirements.
+    """
+    # Blender 4.2+ handles wheels automatically via blender_manifest.toml
+    if bpy.app.version >= (4, 2, 0):
+        return
+    
     import sys
     import os
     import zipfile
     import platform
     
-    addon_path = os.path.dirname(os.path.abspath(__file__))
-    wheels_dir = os.path.join(addon_path, 'wheels')
-    lib_dir = os.path.join(addon_path, 'lib')
+    # Use extension_path_user() for user-writable directory
+    # (complies with read-only filesystem requirement)
+    try:
+        # __package__ should be 'blender_addon' in this context
+        package_name = __package__ or 'blender_addon'
+        user_dir = bpy.utils.extension_path_user(package_name, create=True)
+        lib_dir = os.path.join(user_dir, 'lib')
+    except (AttributeError, Exception):
+        # Fallback: if extension_path_user fails or doesn't exist, skip wheel extraction
+        # Blender 4.2+ will handle it automatically anyway
+        return
     
     # Check if .so file already exists (already installed)
     so_file_found = False
@@ -30,6 +47,10 @@ def _install_wheel_if_needed():
     
     if so_file_found:
         return
+    
+    # Get wheels directory from addon path (read-only, but we can read from it)
+    addon_path = os.path.dirname(os.path.abspath(__file__))
+    wheels_dir = os.path.join(addon_path, 'wheels')
     
     if not os.path.exists(wheels_dir):
         return
@@ -58,7 +79,7 @@ def _install_wheel_if_needed():
     if not wheel_file:
         return
     
-    # Extract wheel to lib directory
+    # Extract wheel to user directory (not addon directory)
     try:
         os.makedirs(lib_dir, exist_ok=True)
         with zipfile.ZipFile(wheel_file, 'r') as wheel:
@@ -67,7 +88,8 @@ def _install_wheel_if_needed():
                 # Extract .so files and dist-info directories
                 if (member.startswith('polychase_core') or 
                     member.startswith('polychase_core-') or
-                    (os.sep in member and 'polychase_core' in member.split(os.sep)[0])):
+                    (os.sep in member and
+                     'polychase_core' in member.split(os.sep)[0])):
                     # Preserve directory structure
                     target_path = os.path.join(lib_dir, member)
                     # Create parent directories if needed
@@ -83,13 +105,9 @@ def _install_wheel_if_needed():
                 for f in files:
                     if f.startswith('polychase_core') and (f.endswith('.so') or f.endswith('.pyd')):
                         so_extracted = True
-                        # If .so is in a subdirectory, we need to add that to path
-                        # We'll load the module explicitly later via importlib
                         break
                 if so_extracted:
                     break
-        
-        # When the .so exists we rely on explicit importlib loading later
     except Exception as e:
         # Log the error for debugging but continue to try other import methods
         import traceback
@@ -105,166 +123,123 @@ else:
     # Try to install wheel for Blender < 4.2
     _install_wheel_if_needed()
     
-    # Try multiple import strategies
-    polychase_core_imported = False
+    # Load polychase_core module into package namespace (complies with Blender distribution policy)
+    # We load it as a sub-module and expose symbols as attributes of this module
+    polychase_core_module = None
     import_error = None
     
     # Strategy 1: Direct import (works when wheel is installed by Blender 4.2+)
     try:
-        import sys
-        from polychase_core import *
-        # Verify that key symbols were actually imported
-        polychase_core_module = sys.modules.get('polychase_core')
-        if 'Pose' in globals() or (polychase_core_module and hasattr(polychase_core_module, 'Pose')):
-            polychase_core_imported = True
-        else:
-            # Import appeared to succeed but symbols aren't available
-            # This can happen if the module loads but doesn't export properly
-            # Try to get symbols from the module directly
-            if polychase_core_module:
-                try:
-                    for name in dir(polychase_core_module):
-                        if not name.startswith('_'):
-                            value = getattr(polychase_core_module, name)
-                            if not isinstance(value, type(sys)):
-                                globals()[name] = value
-                    # Check again if Pose is now available
-                    if 'Pose' in globals():
-                        polychase_core_imported = True
-                    else:
-                        import_error = ImportError("polychase_core imported but Pose symbol not found")
-                except Exception:
-                    import_error = ImportError("polychase_core imported but symbols not accessible")
-            else:
-                import_error = ImportError("polychase_core imported but module not in sys.modules")
+        import polychase_core
+        polychase_core_module = polychase_core
     except ImportError as e:
         import_error = e
     
     # Strategy 2: Import from lib directory (for manually extracted wheels)
-    if not polychase_core_imported:
-        import sys
+    # Check both addon directory (for bundled wheels) and user directory
+    # (for extracted wheels)
+    if polychase_core_module is None:
         import os
         import importlib.util
-        addon_path = os.path.dirname(os.path.abspath(__file__))
-        lib_dir = os.path.join(addon_path, 'lib')
         
-        if os.path.exists(lib_dir):
-            # Find the .so file and try to load it directly
-            so_file = None
-            for root, dirs, files in os.walk(lib_dir):
-                for f in files:
-                    if f.startswith('polychase_core') and (f.endswith('.so') or f.endswith('.pyd')):
-                        so_file = os.path.join(root, f)
+        # Check addon lib directory first (bundled wheels, read-only)
+        addon_path = os.path.dirname(os.path.abspath(__file__))
+        addon_lib_dir = os.path.join(addon_path, 'lib')
+        
+        # Check user lib directory (extracted wheels, writable)
+        user_lib_dir = None
+        try:
+            package_name = __package__ or 'blender_addon'
+            user_dir = bpy.utils.extension_path_user(package_name, create=False)
+            if user_dir:
+                user_lib_dir = os.path.join(user_dir, 'lib')
+        except (AttributeError, Exception):
+            pass
+        
+        # Search for .so file in both locations
+        so_file = None
+        for lib_dir in [addon_lib_dir, user_lib_dir]:
+            if lib_dir and os.path.exists(lib_dir):
+                for root, dirs, files in os.walk(lib_dir):
+                    for f in files:
+                        if f.startswith('polychase_core') and (f.endswith('.so') or f.endswith('.pyd')):
+                            so_file = os.path.join(root, f)
+                            break
+                    if so_file:
                         break
                 if so_file:
                     break
-            
-            if so_file:
-                # Try importing using importlib (more reliable for .so files)
+        
+        if so_file:
+            # Load module using importlib without manipulating sys.modules
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    "blender_addon.lib.polychase_core", so_file
+                )
+                if spec and spec.loader:
+                    polychase_core_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(polychase_core_module)
+            except Exception as e:
+                import_error = e
+                # Try to diagnose the issue - check if it's a dependency problem
                 try:
-                    spec = importlib.util.spec_from_file_location("polychase_core", so_file)
-                    if spec and spec.loader:
-                        # Register the module in sys.modules first
-                        import sys
-                        module = importlib.util.module_from_spec(spec)
-                        sys.modules["polychase_core"] = module
-                        spec.loader.exec_module(module)
-                        # Import all symbols into current namespace
-                        # Use dir() to get all attributes, including those from pybind11
-                        # Then get the actual values from getattr()
-                        current_module = sys.modules[__name__]
-                        for name in dir(module):
-                            if not name.startswith('_'):
-                                try:
-                                    value = getattr(module, name)
-                                    # Only import non-module attributes (classes, functions, etc.)
-                                    if not isinstance(value, type(sys)):
-                                        globals()[name] = value
-                                        setattr(current_module, name, value)
-                                except (AttributeError, TypeError):
-                                    pass
-                        polychase_core_imported = True
-                except Exception as e:
-                    import_error = e
-                    # Try to diagnose the issue - check if it's a dependency problem
-                    try:
-                        import ctypes
-                        # Try loading with ctypes to see if it's a dependency issue
-                        ctypes.CDLL(so_file, mode=ctypes.RTLD_GLOBAL)
-                        # If ctypes can load it, the issue is with Python import, not dependencies
-                    except Exception as ctypes_error:
-                        # If ctypes also fails, it's likely a dependency issue
-                        import_error = Exception(
-                            f"Failed to load .so file. Import error: {e}. "
-                            f"ctypes error: {ctypes_error}. "
-                            f"This may indicate missing system dependencies or Python version mismatch."
-                        )
-            
-            # If direct loading failed, try normal import
-            if not polychase_core_imported:
-                try:
-                    from polychase_core import *
-                    polychase_core_imported = True
-                except ImportError as e:
-                    import_error = e
+                    import ctypes
+                    # Try loading with ctypes to see if it's a dependency issue
+                    ctypes.CDLL(so_file, mode=ctypes.RTLD_GLOBAL)
+                    # If ctypes can load it, the issue is with Python import, not dependencies
+                except Exception as ctypes_error:
+                    # If ctypes also fails, it's likely a dependency issue
+                    import_error = Exception(
+                        f"Failed to load .so file. Import error: {e}. "
+                        f"ctypes error: {ctypes_error}. "
+                        f"This may indicate missing system dependencies or "
+                        f"Python version mismatch."
+                    )
     
     # Strategy 3: Relative import from .lib (for development)
-    if not polychase_core_imported:
+    if polychase_core_module is None:
         try:
-            from .lib.polychase_core import *
-            polychase_core_imported = True
+            from .lib import polychase_core
+            polychase_core_module = polychase_core
         except ImportError as e:
             import_error = e
     
-    # Final verification: Ensure Pose and other key symbols are accessible
-    # This handles cases where the module loads but symbols aren't properly exposed
-    if polychase_core_imported:
+    # Expose symbols as attributes of this module (package namespace)
+    if polychase_core_module is not None:
         import sys
-        polychase_core_module = sys.modules.get('polychase_core')
-        if polychase_core_module:
-            # Get the current module (core module) to set attributes on
-            current_module = sys.modules.get(__name__)
-            if current_module is None:
-                # If module not in sys.modules yet, create a reference
-                import types
-                current_module = types.ModuleType(__name__)
-                sys.modules[__name__] = current_module
-            
-            # Copy all public symbols from polychase_core to both globals() and module attributes
-            key_symbols = ['Pose', 'CameraState', 'CameraIntrinsics', 'TrackerThread']
-            for symbol_name in key_symbols:
-                if hasattr(polychase_core_module, symbol_name):
-                    value = getattr(polychase_core_module, symbol_name)
-                    # Set in globals() for direct access
-                    globals()[symbol_name] = value
-                    # Set as module attribute for core.Pose access
-                    setattr(current_module, symbol_name, value)
-            
-            # Also copy all other public symbols (not just key ones)
-            for name in dir(polychase_core_module):
-                if not name.startswith('_') and name not in key_symbols:
-                    try:
-                        value = getattr(polychase_core_module, name)
-                        # Only import non-module attributes
-                        if not isinstance(value, type(sys)):
-                            globals()[name] = value
-                            setattr(current_module, name, value)
-                    except (AttributeError, TypeError):
-                        pass
-            
-            # Final check: verify Pose is accessible
-            if 'Pose' not in globals() and not hasattr(current_module, 'Pose'):
-                # Some builds expose CameraPose instead of Pose; alias it if available
-                if hasattr(polychase_core_module, 'CameraPose'):
-                    value = getattr(polychase_core_module, 'CameraPose')
-                    globals()['Pose'] = value
-                    setattr(current_module, 'Pose', value)
-                else:
-                    polychase_core_imported = False
-                    import_error = ImportError("polychase_core imported but Pose symbol not found after symbol copy")
+        # Get current module to set attributes on
+        current_module = sys.modules[__name__]
+        
+        # Copy all public symbols from polychase_core to module attributes
+        key_symbols = ['Pose', 'CameraState', 'CameraIntrinsics', 'TrackerThread']
+        for symbol_name in key_symbols:
+            if hasattr(polychase_core_module, symbol_name):
+                value = getattr(polychase_core_module, symbol_name)
+                setattr(current_module, symbol_name, value)
+        
+        # Also copy all other public symbols
+        for name in dir(polychase_core_module):
+            if not name.startswith('_') and name not in key_symbols:
+                try:
+                    value = getattr(polychase_core_module, name)
+                    # Only import non-module attributes
+                    if not isinstance(value, type(sys)):
+                        setattr(current_module, name, value)
+                except (AttributeError, TypeError):
+                    pass
+        
+        # Final check: verify Pose is accessible
+        if not hasattr(current_module, 'Pose'):
+            # Some builds expose CameraPose instead of Pose; alias it if available
+            if hasattr(polychase_core_module, 'CameraPose'):
+                value = getattr(polychase_core_module, 'CameraPose')
+                setattr(current_module, 'Pose', value)
+            else:
+                polychase_core_module = None
+                import_error = ImportError("polychase_core imported but Pose symbol not found")
     
     # If all imports failed, raise a helpful error
-    if not polychase_core_imported:
+    if polychase_core_module is None:
         import sys
         import os
         addon_path = os.path.dirname(os.path.abspath(__file__))
@@ -279,13 +254,18 @@ else:
                     lib_contents.append(os.path.relpath(os.path.join(root, f), lib_dir))
         
         # Check sys.path
-        relevant_paths = [p for p in sys.path if 'polychase' in p.lower() or 'addon' in p.lower()]
+        relevant_paths = [
+            p for p in sys.path
+            if 'polychase' in p.lower() or 'addon' in p.lower()
+        ]
         
         error_msg = (
             f"Failed to import polychase_core.\n"
             f"Addon path: {addon_path}\n"
-            f"Wheels directory: {wheels_dir} ({'exists' if os.path.exists(wheels_dir) else 'missing'})\n"
-            f"Lib directory: {lib_dir} ({'exists' if os.path.exists(lib_dir) else 'missing'})\n"
+            f"Wheels directory: {wheels_dir} "
+            f"({'exists' if os.path.exists(wheels_dir) else 'missing'})\n"
+            f"Lib directory: {lib_dir} "
+            f"({'exists' if os.path.exists(lib_dir) else 'missing'})\n"
         )
         
         if lib_contents:
@@ -320,7 +300,10 @@ else:
                     if match:
                         wheel_py_major = match.group(1)
                         wheel_py_minor = match.group(2)
-                        available_wheels.append(f"Python {wheel_py_major}.{wheel_py_minor} (cp{wheel_py_major}{wheel_py_minor})")
+                        available_wheels.append(
+                            f"Python {wheel_py_major}.{wheel_py_minor} "
+                            f"(cp{wheel_py_major}{wheel_py_minor})"
+                        )
         
         if available_wheels:
             error_msg += f"  Available wheels: {', '.join(available_wheels)}\n"
@@ -329,17 +312,35 @@ else:
         
         # Check if we have a matching wheel
         required_wheel_tag = f"cp{sys.version_info.major}{sys.version_info.minor:02d}"
-        has_matching_wheel = any(required_wheel_tag in w for w in available_wheels) if available_wheels else False
+        has_matching_wheel = (
+            any(required_wheel_tag in w for w in available_wheels)
+            if available_wheels else False
+        )
         
         if not has_matching_wheel:
             error_msg += f"\nSOLUTION: Python version mismatch detected!\n"
-            error_msg += f"  Blender is using Python {python_version}, but no matching wheel found.\n"
+            error_msg += (
+                f"  Blender is using Python {python_version}, "
+                f"but no matching wheel found.\n"
+            )
             error_msg += f"  Required wheel tag: {required_wheel_tag}\n"
-            error_msg += f"  Python extension modules (.so files) are version-specific and cannot be loaded across versions.\n\n"
+            error_msg += (
+                f"  Python extension modules (.so files) are "
+                f"version-specific and cannot be loaded across versions.\n\n"
+            )
             error_msg += f"Options to fix this:\n"
-            error_msg += f"  1. Upgrade to Blender 4.2+ which supports automatic wheel installation via blender_manifest.toml\n"
-            error_msg += f"  2. Build a wheel for Python {python_version_short} (see build_wheel.sh in the repository)\n"
-            error_msg += f"  3. Contact the maintainer to request a wheel for Python {python_version_short}\n"
+            error_msg += (
+                f"  1. Upgrade to Blender 4.2+ which supports automatic "
+                f"wheel installation via blender_manifest.toml\n"
+            )
+            error_msg += (
+                f"  2. Build a wheel for Python {python_version_short} "
+                f"(see build_wheel.sh in the repository)\n"
+            )
+            error_msg += (
+                f"  3. Contact the maintainer to request a wheel for "
+                f"Python {python_version_short}\n"
+            )
         
         raise ImportError(error_msg) from None
 
@@ -436,7 +437,7 @@ class PinModeData:
             if len(self._distances) < len(self._points):
                 # Add NaN for new pins
                 new_distances = np.full(
-                    (len(self._points) - len(self._distances),), 
+                    (len(self._points) - len(self._distances),),
                     np.nan, dtype=np.float32)
                 self._distances = np.append(self._distances, new_distances)
             else:
